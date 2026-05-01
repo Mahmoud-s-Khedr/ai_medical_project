@@ -1,0 +1,629 @@
+{
+  "info": {
+    "name": "Medicine OCR API",
+    "_postman_id": "medicine-ocr-api-v2",
+    "description": "Complete collection for the Medicine OCR API.\n\n**Setup:**\n1. Import this collection and the environment file\n2. Set `base_url` in the environment (default: `http://localhost:8000`)\n3. Run **Register** or **Login** — tokens are saved automatically\n4. All protected endpoints use `{{access_token}}` automatically\n\n**Auth flow:**\n- `POST /api/auth/register/` or `POST /api/auth/token/` → saves access + refresh tokens\n- Tokens are set as collection variables via test scripts\n- Use **Refresh Token** when access token expires",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "auth": {
+    "type": "bearer",
+    "bearer": [
+      {"key": "token", "value": "{{access_token}}", "type": "string"}
+    ]
+  },
+  "variable": [
+    {"key": "base_url", "value": "http://localhost:8000", "type": "string"},
+    {"key": "access_token", "value": "", "type": "string"},
+    {"key": "refresh_token", "value": "", "type": "string"},
+    {"key": "medicine_id", "value": "1", "type": "string"},
+    {"key": "reminder_id", "value": "1", "type": "string"},
+    {"key": "reset_uid", "value": "", "type": "string"},
+    {"key": "reset_token", "value": "", "type": "string"}
+  ],
+  "item": [
+    {
+      "name": "🔑 Auth",
+      "item": [
+        {
+          "name": "Register",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "var json = pm.response.json();",
+                  "if (json.access)  pm.collectionVariables.set('access_token',  json.access);",
+                  "if (json.refresh) pm.collectionVariables.set('refresh_token', json.refresh);",
+                  "pm.test('Status 201', () => pm.response.to.have.status(201));",
+                  "pm.test('Has access token', () => pm.expect(json.access).to.be.a('string'));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [{"key": "Content-Type", "value": "application/json"}],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"username\": \"testuser\",\n  \"email\": \"testuser@example.com\",\n  \"password\": \"StrongPass123!\",\n  \"password2\": \"StrongPass123!\",\n  \"first_name\": \"Test\",\n  \"last_name\": \"User\"\n}"
+            },
+            "url": {"raw": "{{base_url}}/api/auth/register/", "host": ["{{base_url}}"], "path": ["api", "auth", "register", ""]}
+          }
+        },
+        {
+          "name": "Login (Get Tokens)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "var json = pm.response.json();",
+                  "if (json.access)  pm.collectionVariables.set('access_token',  json.access);",
+                  "if (json.refresh) pm.collectionVariables.set('refresh_token', json.refresh);",
+                  "pm.test('Status 200', () => pm.response.to.have.status(200));",
+                  "pm.test('Has access token', () => pm.expect(json.access).to.be.a('string'));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [{"key": "Content-Type", "value": "application/json"}],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"username\": \"testuser\",\n  \"password\": \"StrongPass123!\"\n}"
+            },
+            "url": {"raw": "{{base_url}}/api/auth/token/", "host": ["{{base_url}}"], "path": ["api", "auth", "token", ""]}
+          }
+        },
+        {
+          "name": "Refresh Access Token",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "var json = pm.response.json();",
+                  "if (json.access)  pm.collectionVariables.set('access_token',  json.access);",
+                  "if (json.refresh) pm.collectionVariables.set('refresh_token', json.refresh);",
+                  "pm.test('Status 200', () => pm.response.to.have.status(200));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "auth": {"type": "noauth"},
+            "method": "POST",
+            "header": [{"key": "Content-Type", "value": "application/json"}],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"refresh\": \"{{refresh_token}}\"\n}"
+            },
+            "url": {"raw": "{{base_url}}/api/auth/token/refresh/", "host": ["{{base_url}}"], "path": ["api", "auth", "token", "refresh", ""]}
+          }
+        },
+        {
+          "name": "Verify Token",
+          "request": {
+            "auth": {"type": "noauth"},
+            "method": "POST",
+            "header": [{"key": "Content-Type", "value": "application/json"}],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"token\": \"{{access_token}}\"\n}"
+            },
+            "url": {"raw": "{{base_url}}/api/auth/token/verify/", "host": ["{{base_url}}"], "path": ["api", "auth", "token", "verify", ""]}
+          }
+        },
+        {
+          "name": "Logout",
+          "request": {
+            "method": "POST",
+            "header": [{"key": "Content-Type", "value": "application/json"}],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"refresh\": \"{{refresh_token}}\"\n}"
+            },
+            "url": {"raw": "{{base_url}}/api/auth/logout/", "host": ["{{base_url}}"], "path": ["api", "auth", "logout", ""]}
+          }
+        },
+        {
+          "name": "Get My Profile",
+          "request": {
+            "method": "GET",
+            "url": {"raw": "{{base_url}}/api/auth/me/", "host": ["{{base_url}}"], "path": ["api", "auth", "me", ""]}
+          }
+        },
+        {
+          "name": "Update My Profile",
+          "request": {
+            "method": "PATCH",
+            "header": [{"key": "Content-Type", "value": "application/json"}],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"first_name\": \"Ahmed\",\n  \"last_name\": \"Hassan\"\n}"
+            },
+            "url": {"raw": "{{base_url}}/api/auth/me/", "host": ["{{base_url}}"], "path": ["api", "auth", "me", ""]}
+          }
+        },
+        {
+          "name": "Change Password",
+          "request": {
+            "method": "POST",
+            "header": [{"key": "Content-Type", "value": "application/json"}],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"old_password\": \"StrongPass123!\",\n  \"new_password\": \"NewStrongPass456!\",\n  \"new_password2\": \"NewStrongPass456!\"\n}"
+            },
+            "url": {"raw": "{{base_url}}/api/auth/me/change-password/", "host": ["{{base_url}}"], "path": ["api", "auth", "me", "change-password", ""]}
+          }
+        },
+        {
+          "name": "Request Password Reset",
+          "request": {
+            "auth": {"type": "noauth"},
+            "method": "POST",
+            "header": [{"key": "Content-Type", "value": "application/json"}],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"email\": \"testuser@example.com\"\n}"
+            },
+            "url": {"raw": "{{base_url}}/api/auth/password-reset/", "host": ["{{base_url}}"], "path": ["api", "auth", "password-reset", ""]}
+          }
+        },
+        {
+          "name": "Confirm Password Reset",
+          "request": {
+            "auth": {"type": "noauth"},
+            "method": "POST",
+            "header": [{"key": "Content-Type", "value": "application/json"}],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"uid\": \"{{reset_uid}}\",\n  \"token\": \"{{reset_token}}\",\n  \"new_password\": \"BrandNewPass789!\",\n  \"new_password2\": \"BrandNewPass789!\"\n}"
+            },
+            "url": {"raw": "{{base_url}}/api/auth/password-reset/confirm/", "host": ["{{base_url}}"], "path": ["api", "auth", "password-reset", "confirm", ""]}
+          }
+        }
+      ]
+    },
+    {
+      "name": "💊 Medicines",
+      "item": [
+        {
+          "name": "List Medicines",
+          "request": {
+            "method": "GET",
+            "url": {
+              "raw": "{{base_url}}/api/medicines/",
+              "host": ["{{base_url}}"],
+              "path": ["api", "medicines", ""],
+              "query": [
+                {"key": "page", "value": "1", "disabled": true},
+                {"key": "page_size", "value": "20", "disabled": true}
+              ]
+            }
+          }
+        },
+        {
+          "name": "Search Medicines",
+          "request": {
+            "method": "GET",
+            "url": {
+              "raw": "{{base_url}}/api/medicines/?search=panadol",
+              "host": ["{{base_url}}"],
+              "path": ["api", "medicines", ""],
+              "query": [{"key": "search", "value": "panadol"}]
+            }
+          }
+        },
+        {
+          "name": "Get Medicine",
+          "request": {
+            "method": "GET",
+            "url": {"raw": "{{base_url}}/api/medicines/{{medicine_id}}/", "host": ["{{base_url}}"], "path": ["api", "medicines", "{{medicine_id}}", ""]}
+          }
+        },
+        {
+          "name": "Create Medicine (Admin only)",
+          "request": {
+            "method": "POST",
+            "header": [{"key": "Content-Type", "value": "application/json"}],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"trade_name\": \"Panadol Extra\",\n  \"active_ingredient\": \"Paracetamol + Caffeine\",\n  \"strength\": \"500mg/65mg\",\n  \"dosage_form\": \"Tablet\",\n  \"drug_class\": \"Analgesic\",\n  \"common_side_effects\": \"Rare at recommended doses\",\n  \"serious_warning\": \"Do not exceed 8 tablets in 24 hours\"\n}"
+            },
+            "url": {"raw": "{{base_url}}/api/medicines/", "host": ["{{base_url}}"], "path": ["api", "medicines", ""]}
+          }
+        },
+        {
+          "name": "Update Medicine (Admin only)",
+          "request": {
+            "method": "PATCH",
+            "header": [{"key": "Content-Type", "value": "application/json"}],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"strength\": \"500mg\",\n  \"common_side_effects\": \"Nausea, rash\"\n}"
+            },
+            "url": {"raw": "{{base_url}}/api/medicines/{{medicine_id}}/", "host": ["{{base_url}}"], "path": ["api", "medicines", "{{medicine_id}}", ""]}
+          }
+        },
+        {
+          "name": "Delete Medicine (Admin only)",
+          "request": {
+            "method": "DELETE",
+            "url": {"raw": "{{base_url}}/api/medicines/{{medicine_id}}/", "host": ["{{base_url}}"], "path": ["api", "medicines", "{{medicine_id}}", ""]}
+          }
+        },
+        {
+          "name": "Get Medicine Interactions",
+          "request": {
+            "method": "GET",
+            "url": {"raw": "{{base_url}}/api/medicines/{{medicine_id}}/interactions/", "host": ["{{base_url}}"], "path": ["api", "medicines", "{{medicine_id}}", "interactions", ""]},
+            "description": "Returns all medicines that may conflict with the given medicine.\n\n**Response fields:**\n- `interaction_notes`: general interaction warnings\n- `similarity_risk_symptoms`: symptoms to watch for\n- `switching_note`: note about switching drugs\n- `total_conflicts`: number of conflicting medicines found\n- `conflicts[]`:\n  - `conflict_type`: `same_active_ingredient` or `similar_active_ingredient`\n  - `risk_level`: `high` (same ingredient = overdose risk) or `medium` (similar = interaction risk)\n  - `conflict_reason`: human-readable explanation\n  - `matched_ingredient`: the ingredient that triggered the match\n  - `medicine`: full medicine object"
+          }
+        }
+      ]
+    },
+    {
+      "name": "⏰ Reminders",
+      "item": [
+        {
+          "name": "List My Reminders",
+          "request": {
+            "method": "GET",
+            "url": {
+              "raw": "{{base_url}}/api/reminders/",
+              "host": ["{{base_url}}"],
+              "path": ["api", "reminders", ""],
+              "query": [
+                {"key": "is_active", "value": "true", "disabled": true},
+                {"key": "page", "value": "1", "disabled": true}
+              ]
+            }
+          }
+        },
+        {
+          "name": "Create Reminder",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "var json = pm.response.json();",
+                  "if (json.id) pm.collectionVariables.set('reminder_id', json.id);",
+                  "pm.test('Status 201', () => pm.response.to.have.status(201));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [{"key": "Content-Type", "value": "application/json"}],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"medicine_id\": {{medicine_id}},\n  \"medicine_name\": \"Panadol Extra\",\n  \"dose\": \"1 tablet\",\n  \"times\": [\"08:00\", \"14:00\", \"20:00\"],\n  \"start_date\": \"2025-05-01\",\n  \"end_date\": \"2025-05-30\",\n  \"timezone\": \"Africa/Cairo\",\n  \"notes\": \"Take after meals\"\n}"
+            },
+            "url": {"raw": "{{base_url}}/api/reminders/", "host": ["{{base_url}}"], "path": ["api", "reminders", ""]}
+          }
+        },
+        {
+          "name": "Get Reminder",
+          "request": {
+            "method": "GET",
+            "url": {"raw": "{{base_url}}/api/reminders/{{reminder_id}}/", "host": ["{{base_url}}"], "path": ["api", "reminders", "{{reminder_id}}", ""]}
+          }
+        },
+        {
+          "name": "Update Reminder",
+          "request": {
+            "method": "PATCH",
+            "header": [{"key": "Content-Type", "value": "application/json"}],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"dose\": \"2 tablets\",\n  \"notes\": \"Take with water\",\n  \"is_active\": true\n}"
+            },
+            "url": {"raw": "{{base_url}}/api/reminders/{{reminder_id}}/", "host": ["{{base_url}}"], "path": ["api", "reminders", "{{reminder_id}}", ""]}
+          }
+        },
+        {
+          "name": "Delete Reminder",
+          "request": {
+            "method": "DELETE",
+            "url": {"raw": "{{base_url}}/api/reminders/{{reminder_id}}/", "host": ["{{base_url}}"], "path": ["api", "reminders", "{{reminder_id}}", ""]}
+          }
+        },
+        {
+          "name": "List Reminder Events",
+          "request": {
+            "method": "GET",
+            "url": {"raw": "{{base_url}}/api/reminders/{{reminder_id}}/events/", "host": ["{{base_url}}"], "path": ["api", "reminders", "{{reminder_id}}", "events", ""]}
+          }
+        },
+        {
+          "name": "Create Reminder Event",
+          "request": {
+            "method": "POST",
+            "header": [{"key": "Content-Type", "value": "application/json"}],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"scheduled_at\": \"2025-05-01T08:00:00Z\",\n  \"status\": \"taken\",\n  \"taken_at\": \"2025-05-01T08:05:00Z\",\n  \"notes\": \"Taken on time\"\n}"
+            },
+            "url": {"raw": "{{base_url}}/api/reminders/{{reminder_id}}/events/", "host": ["{{base_url}}"], "path": ["api", "reminders", "{{reminder_id}}", "events", ""]}
+          }
+        }
+      ]
+    },
+    {
+      "name": "🔍 OCR Search",
+      "item": [
+        {
+          "name": "OCR Medicine Search",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "body": {
+              "mode": "formdata",
+              "formdata": [
+                {"key": "image", "type": "file", "src": "", "description": "Upload a medicine box/label image (JPG, PNG)"},
+                {"key": "top_k", "value": "5", "type": "text", "description": "Max number of results to return (1-20)"}
+              ]
+            },
+            "url": {"raw": "{{base_url}}/api/uploads/ocr-search/", "host": ["{{base_url}}"], "path": ["api", "uploads", "ocr-search", ""]},
+            "description": "Upload a medicine image and get fuzzy-matched results from the database.\n\n**Request:** `multipart/form-data`\n- `image` (required): medicine box photo\n- `top_k` (optional): number of results, default 5, max 20\n\n**Response:**\n- `ocr_raw_text`: extracted text\n- `ocr_confidence`: 0.0–1.0\n- `ocr_engine`: `easyocr` or `tesseract`\n- `matches`: ranked list of medicines with similarity score"
+          }
+        }
+      ]
+    },
+    {
+      "name": "🏥 Medical Record",
+      "item": [
+        {
+          "name": "Get My Medical Record",
+          "request": {
+            "method": "GET",
+            "url": {"raw": "{{base_url}}/api/medical-record/", "host": ["{{base_url}}"], "path": ["api", "medical-record", ""]},
+            "description": "Returns the patient's medical record (created automatically on first call)."
+          }
+        },
+        {
+          "name": "Update Medical Record",
+          "request": {
+            "method": "PATCH",
+            "header": [{"key": "Content-Type", "value": "application/json"}],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"date_of_birth\": \"1990-05-15\",\n  \"gender\": \"M\",\n  \"blood_type\": \"O+\",\n  \"height_cm\": \"175.0\",\n  \"weight_kg\": \"80.0\",\n  \"phone_number\": \"+20100000000\",\n  \"emergency_contact_name\": \"Mohamed Hassan\",\n  \"emergency_contact_phone\": \"+20111111111\",\n  \"notes\": \"No chronic conditions\"\n}"
+            },
+            "url": {"raw": "{{base_url}}/api/medical-record/", "host": ["{{base_url}}"], "path": ["api", "medical-record", ""]}
+          }
+        },
+        {
+          "name": "Full Summary (All Data)",
+          "request": {
+            "method": "GET",
+            "url": {"raw": "{{base_url}}/api/medical-record/summary/", "host": ["{{base_url}}"], "path": ["api", "medical-record", "summary", ""]},
+            "description": "Returns everything in one call: patient info + diagnoses + allergies + latest vitals + lab results + doctor visits."
+          }
+        },
+        {
+          "name": "── Diagnoses ──",
+          "item": [
+            {
+              "name": "List Diagnoses",
+              "request": {
+                "method": "GET",
+                "url": {
+                  "raw": "{{base_url}}/api/medical-record/diagnoses/",
+                  "host": ["{{base_url}}"], "path": ["api", "medical-record", "diagnoses", ""],
+                  "query": [
+                    {"key": "status", "value": "active", "disabled": true, "description": "active | chronic | resolved"}
+                  ]
+                }
+              }
+            },
+            {
+              "name": "Create Diagnosis",
+              "request": {
+                "method": "POST",
+                "header": [{"key": "Content-Type", "value": "application/json"}],
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"condition_name\": \"Type 2 Diabetes\",\n  \"icd_code\": \"E11\",\n  \"diagnosed_date\": \"2020-03-15\",\n  \"status\": \"chronic\",\n  \"diagnosed_by\": \"Dr. Ahmed Samy\",\n  \"notes\": \"On Metformin 500mg\"\n}"
+                },
+                "url": {"raw": "{{base_url}}/api/medical-record/diagnoses/", "host": ["{{base_url}}"], "path": ["api", "medical-record", "diagnoses", ""]}
+              }
+            },
+            {
+              "name": "Update Diagnosis",
+              "request": {
+                "method": "PATCH",
+                "header": [{"key": "Content-Type", "value": "application/json"}],
+                "body": {"mode": "raw", "raw": "{\n  \"status\": \"resolved\"\n}"},
+                "url": {"raw": "{{base_url}}/api/medical-record/diagnoses/1/", "host": ["{{base_url}}"], "path": ["api", "medical-record", "diagnoses", "1", ""]}
+              }
+            },
+            {
+              "name": "Delete Diagnosis",
+              "request": {
+                "method": "DELETE",
+                "url": {"raw": "{{base_url}}/api/medical-record/diagnoses/1/", "host": ["{{base_url}}"], "path": ["api", "medical-record", "diagnoses", "1", ""]}
+              }
+            }
+          ]
+        },
+        {
+          "name": "── Allergies ──",
+          "item": [
+            {
+              "name": "List Allergies",
+              "request": {
+                "method": "GET",
+                "url": {
+                  "raw": "{{base_url}}/api/medical-record/allergies/",
+                  "host": ["{{base_url}}"], "path": ["api", "medical-record", "allergies", ""],
+                  "query": [
+                    {"key": "type", "value": "drug", "disabled": true, "description": "drug | food | environmental | other"}
+                  ]
+                }
+              }
+            },
+            {
+              "name": "Create Allergy",
+              "request": {
+                "method": "POST",
+                "header": [{"key": "Content-Type", "value": "application/json"}],
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"allergen\": \"Penicillin\",\n  \"allergen_type\": \"drug\",\n  \"reaction\": \"Anaphylaxis, hives\",\n  \"severity\": \"severe\",\n  \"notes\": \"Carry EpiPen\"\n}"
+                },
+                "url": {"raw": "{{base_url}}/api/medical-record/allergies/", "host": ["{{base_url}}"], "path": ["api", "medical-record", "allergies", ""]}
+              }
+            },
+            {
+              "name": "Delete Allergy",
+              "request": {
+                "method": "DELETE",
+                "url": {"raw": "{{base_url}}/api/medical-record/allergies/1/", "host": ["{{base_url}}"], "path": ["api", "medical-record", "allergies", "1", ""]}
+              }
+            }
+          ]
+        },
+        {
+          "name": "── Vital Signs ──",
+          "item": [
+            {
+              "name": "List Vitals",
+              "request": {
+                "method": "GET",
+                "url": {"raw": "{{base_url}}/api/medical-record/vitals/", "host": ["{{base_url}}"], "path": ["api", "medical-record", "vitals", ""]}
+              }
+            },
+            {
+              "name": "Record Vitals",
+              "request": {
+                "method": "POST",
+                "header": [{"key": "Content-Type", "value": "application/json"}],
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"recorded_at\": \"2025-05-01T08:00:00Z\",\n  \"blood_pressure_systolic\": 120,\n  \"blood_pressure_diastolic\": 80,\n  \"heart_rate\": 72,\n  \"temperature_celsius\": \"36.6\",\n  \"weight_kg\": \"80.0\",\n  \"height_cm\": \"175.0\",\n  \"blood_glucose_mg_dl\": \"95.0\",\n  \"oxygen_saturation_pct\": \"98.5\",\n  \"notes\": \"Morning reading\"\n}"
+                },
+                "url": {"raw": "{{base_url}}/api/medical-record/vitals/", "host": ["{{base_url}}"], "path": ["api", "medical-record", "vitals", ""]}
+              }
+            },
+            {
+              "name": "Delete Vital Reading",
+              "request": {
+                "method": "DELETE",
+                "url": {"raw": "{{base_url}}/api/medical-record/vitals/1/", "host": ["{{base_url}}"], "path": ["api", "medical-record", "vitals", "1", ""]}
+              }
+            }
+          ]
+        },
+        {
+          "name": "── Lab Results ──",
+          "item": [
+            {
+              "name": "List Lab Results",
+              "request": {
+                "method": "GET",
+                "url": {
+                  "raw": "{{base_url}}/api/medical-record/lab-results/",
+                  "host": ["{{base_url}}"], "path": ["api", "medical-record", "lab-results", ""],
+                  "query": [{"key": "abnormal", "value": "true", "disabled": true}]
+                }
+              }
+            },
+            {
+              "name": "Add Lab Result",
+              "request": {
+                "method": "POST",
+                "header": [{"key": "Content-Type", "value": "application/json"}],
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"test_name\": \"HbA1c\",\n  \"result_value\": \"7.2\",\n  \"unit\": \"%\",\n  \"reference_range\": \"< 5.7\",\n  \"is_abnormal\": true,\n  \"recorded_at\": \"2025-04-01\",\n  \"lab_name\": \"Cairo Medical Lab\",\n  \"notes\": \"Indicates poor glucose control\"\n}"
+                },
+                "url": {"raw": "{{base_url}}/api/medical-record/lab-results/", "host": ["{{base_url}}"], "path": ["api", "medical-record", "lab-results", ""]}
+              }
+            },
+            {
+              "name": "Delete Lab Result",
+              "request": {
+                "method": "DELETE",
+                "url": {"raw": "{{base_url}}/api/medical-record/lab-results/1/", "host": ["{{base_url}}"], "path": ["api", "medical-record", "lab-results", "1", ""]}
+              }
+            }
+          ]
+        },
+        {
+          "name": "── Doctor Visits ──",
+          "item": [
+            {
+              "name": "List Visits",
+              "request": {
+                "method": "GET",
+                "url": {"raw": "{{base_url}}/api/medical-record/visits/", "host": ["{{base_url}}"], "path": ["api", "medical-record", "visits", ""]}
+              }
+            },
+            {
+              "name": "Add Doctor Visit",
+              "request": {
+                "method": "POST",
+                "header": [{"key": "Content-Type", "value": "application/json"}],
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"visit_date\": \"2025-04-20\",\n  \"doctor_name\": \"Dr. Sara Khaled\",\n  \"specialty\": \"Endocrinology\",\n  \"reason\": \"Diabetes 3-month follow-up\",\n  \"diagnosis_notes\": \"HbA1c improved. Blood pressure stable.\",\n  \"prescription_notes\": \"Continue Metformin 500mg twice daily. Add Atorvastatin 10mg.\",\n  \"follow_up_date\": \"2025-07-20\",\n  \"notes\": \"Advised low-carb diet\"\n}"
+                },
+                "url": {"raw": "{{base_url}}/api/medical-record/visits/", "host": ["{{base_url}}"], "path": ["api", "medical-record", "visits", ""]}
+              }
+            },
+            {
+              "name": "Update Visit",
+              "request": {
+                "method": "PATCH",
+                "header": [{"key": "Content-Type", "value": "application/json"}],
+                "body": {"mode": "raw", "raw": "{\n  \"notes\": \"Patient reported improvement\"\n}"},
+                "url": {"raw": "{{base_url}}/api/medical-record/visits/1/", "host": ["{{base_url}}"], "path": ["api", "medical-record", "visits", "1", ""]}
+              }
+            },
+            {
+              "name": "Delete Visit",
+              "request": {
+                "method": "DELETE",
+                "url": {"raw": "{{base_url}}/api/medical-record/visits/1/", "host": ["{{base_url}}"], "path": ["api", "medical-record", "visits", "1", ""]}
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "📄 API Docs",
+      "item": [
+        {
+          "name": "Swagger UI",
+          "request": {
+            "auth": {"type": "noauth"},
+            "method": "GET",
+            "url": {"raw": "{{base_url}}/api/docs/", "host": ["{{base_url}}"], "path": ["api", "docs", ""]}
+          }
+        },
+        {
+          "name": "ReDoc",
+          "request": {
+            "auth": {"type": "noauth"},
+            "method": "GET",
+            "url": {"raw": "{{base_url}}/api/redoc/", "host": ["{{base_url}}"], "path": ["api", "redoc", ""]}
+          }
+        },
+        {
+          "name": "OpenAPI Schema (JSON)",
+          "request": {
+            "auth": {"type": "noauth"},
+            "method": "GET",
+            "url": {"raw": "{{base_url}}/api/schema/", "host": ["{{base_url}}"], "path": ["api", "schema", ""]}
+          }
+        }
+      ]
+    }
+  ]
+}

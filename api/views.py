@@ -1,0 +1,477 @@
+from __future__ import annotations
+
+import io
+import logging
+import os
+import re
+import time
+from time import perf_counter
+from typing import Any
+
+import numpy as np
+from django.conf import settings
+from django.db.models import Case, IntegerField, Q, When
+from PIL import Image
+from rest_framework import status, viewsets
+from rest_framework.decorators import action
+from rest_framework.parsers import FormParser, MultiPartParser
+from rest_framework.permissions import IsAuthenticated
+
+from .permissions import IsAdminOrReadOnly
+from rest_framework.response import Response
+from rest_framework.views import APIView
+
+from ai.ocr_pipeline import try_rotations_and_ocr
+
+from .models import MedicationReminder, Medicine
+from .search import search_medicines_ranked
+from .serializers import MedicationReminderSerializer, MedicineSerializer, ReminderEventSerializer
+
+logger = logging.getLogger(__name__)
+
+_MEDICINE_CACHE: dict[str, Any] = {
+    "loaded_at": 0.0,
+    "ttl_seconds": 300,
+    "items": [],
+}
+
+
+def _ocr_angles() -> tuple[int, ...]:
+    raw = str(getattr(settings, "OCR_ROTATION_ANGLES", "0,-10,10,-20,20"))
+    try:
+        parsed = tuple(int(item.strip()) for item in raw.split(",") if item.strip())
+    except ValueError:
+        logger.warning("Invalid OCR_ROTATION_ANGLES=%r; using defaults", raw)
+        return (0, -10, 10, -20, 20)
+    return parsed or (0, -10, 10, -20, 20)
+
+
+def _max_upload_bytes() -> int:
+    # Falls back to 8 MB unless overridden in Django settings.
+    return int(getattr(settings, "OCR_MAX_UPLOAD_BYTES", 8 * 1024 * 1024))
+
+
+def _load_yolo_model() -> Any | None:
+    model_path = getattr(settings, "YOLO_MODEL_PATH", "drug_detector.pt")
+    if not os.path.exists(model_path):
+        logger.warning("YOLO model not found at %s. Full image OCR will be used.", model_path)
+        return None
+
+    try:
+        from ultralytics import YOLO
+    except ImportError:
+        logger.warning("ultralytics is not installed. YOLO detection disabled.")
+        return None
+
+    return YOLO(model_path)
+
+
+yolo_model = _load_yolo_model()
+
+
+def _pil_to_rgb_array(pil_img: Image.Image) -> np.ndarray:
+    return np.array(pil_img.convert("RGB"), dtype=np.uint8)
+
+
+def _extract_crops(image_rgb: np.ndarray) -> list[np.ndarray]:
+    if yolo_model is None:
+        return [image_rgb]
+
+    try:
+        results = yolo_model(image_rgb)
+    except Exception:
+        logger.exception("YOLO inference failed. Falling back to full image OCR.")
+        return [image_rgb]
+
+    crops: list[np.ndarray] = []
+    h_img, w_img = image_rgb.shape[:2]
+    for result in results:
+        boxes = result.boxes.xyxy.cpu().numpy()
+        for box in boxes:
+            x1, y1, x2, y2 = map(int, box)
+            pad_x = max(4, int((x2 - x1) * 0.03))
+            pad_y = max(4, int((y2 - y1) * 0.03))
+            x1 = max(0, x1 - pad_x)
+            y1 = max(0, y1 - pad_y)
+            x2 = min(w_img, x2 + pad_x)
+            y2 = min(h_img, y2 + pad_y)
+            if x2 > x1 and y2 > y1:
+                crops.append(image_rgb[y1:y2, x1:x2])
+
+    return crops or [image_rgb]
+
+
+def _ocr_tokens_from_image(image_rgb: np.ndarray) -> tuple[list[str], dict[str, Any]]:
+    candidates: list[str] = []
+    best_meta: dict[str, Any] = {"confidence": 0.0, "angle": 0, "engine": ""}
+    angles = _ocr_angles()
+    early_exit_confidence = float(getattr(settings, "OCR_EARLY_EXIT_CONFIDENCE", 0.90))
+    skip_tesseract_if_easyocr_confident = float(
+        getattr(settings, "OCR_SKIP_TESSERACT_IF_EASYOCR_CONFIDENT", 0.88)
+    )
+    use_tesseract = bool(getattr(settings, "OCR_USE_TESSERACT", False))
+
+    for crop in _extract_crops(image_rgb):
+        best_text, best_conf, angle, engine = try_rotations_and_ocr(
+            crop,
+            debug=False,
+            angles=angles,
+            early_exit_confidence=early_exit_confidence,
+            skip_tesseract_if_easyocr_confident=skip_tesseract_if_easyocr_confident,
+            use_tesseract=use_tesseract,
+        )
+        if best_conf >= best_meta["confidence"]:
+            best_meta = {"confidence": best_conf, "angle": angle, "engine": engine}
+        if not best_text:
+            continue
+
+        tokens = [token.strip() for token in best_text.split() if len(token.strip()) >= 2]
+        if tokens:
+            candidates.extend([" ".join(tokens), *tokens])
+
+    return list(dict.fromkeys(candidates)), best_meta
+
+
+def _load_medicine_index() -> list[tuple[int, str]]:
+    now = time.time()
+    ttl = int(getattr(settings, "OCR_MEDICINE_CACHE_TTL_SECONDS", _MEDICINE_CACHE["ttl_seconds"]))
+    cached_items = _MEDICINE_CACHE["items"]
+    if cached_items and (now - _MEDICINE_CACHE["loaded_at"]) < ttl:
+        return cached_items
+
+    rows = list(Medicine.objects.values_list("id", "trade_name"))
+    _MEDICINE_CACHE["items"] = rows
+    _MEDICINE_CACHE["loaded_at"] = now
+    _MEDICINE_CACHE["ttl_seconds"] = ttl
+    logger.info("OCR medicine index refreshed: count=%s ttl_seconds=%s", len(rows), ttl)
+    return rows
+
+
+def _fuzzy_search_medicines(query: str, limit: int, query_weight: float = 1.0) -> list[dict[str, Any]]:
+    ranked = search_medicines_ranked(query, limit=limit, query_weight=query_weight)
+    results: list[dict[str, Any]] = []
+    for item in ranked:
+        medicine = item["medicine"]
+        serialized = MedicineSerializer(medicine).data
+        serialized["name"] = medicine.trade_name
+        serialized["score"] = item["score"]
+        serialized["_rank_score"] = item["_rank_score"]
+        serialized["matched_query"] = item["matched_query"]
+        results.append(serialized)
+    return results
+
+
+def _confidence_tier(ocr_confidence: float, top_score: float) -> str:
+    low_threshold = float(getattr(settings, "OCR_LOW_CONFIDENCE_THRESHOLD", 0.72))
+    high_threshold = float(getattr(settings, "OCR_HIGH_CONFIDENCE_THRESHOLD", 0.85))
+
+    combined = (float(ocr_confidence) * 0.55) + (float(top_score) * 0.45)
+    if combined >= high_threshold:
+        return "high"
+    if combined >= low_threshold:
+        return "medium"
+    return "low"
+
+
+def _response_action(tier: str) -> str:
+    return "retake_photo" if tier == "low" else "show_results"
+
+
+class MedicineViewSet(viewsets.ModelViewSet):
+    serializer_class = MedicineSerializer
+    permission_classes = [IsAdminOrReadOnly]
+
+    def get_queryset(self):
+        queryset = Medicine.objects.all()
+        search = self.request.query_params.get("search", "").strip()
+        if search:
+            limit = int(getattr(settings, "SEARCH_COMBINED_TOP_K", 200))
+            ranked = search_medicines_ranked(search, limit=limit, query_weight=1.0)
+            ranked_ids = [item["medicine"].id for item in ranked]
+            if not ranked_ids:
+                return queryset.none()
+            order_expr = Case(
+                *[When(pk=medicine_id, then=idx) for idx, medicine_id in enumerate(ranked_ids)],
+                output_field=IntegerField(),
+            )
+            queryset = queryset.filter(pk__in=ranked_ids).order_by(order_expr)
+        return queryset
+
+    @action(detail=True, methods=["get"], url_path="interactions", permission_classes=[IsAuthenticated])
+    def interactions(self, request, pk=None):
+        """
+        Returns all medicines that may conflict with this medicine:
+        - same_active_ingredient: same ingredient → duplication / overdose risk (HIGH)
+        - similar_active_ingredient: related ingredient → drug interaction risk (MEDIUM)
+        """
+        medicine = self.get_object()
+        conflicts: list[dict] = []
+        seen_ids: set[int] = {medicine.pk}
+
+        # ── 1. Same active ingredient ─────────────────────────────────────────
+        if medicine.active_ingredient.strip():
+            same_qs = Medicine.objects.filter(
+                active_ingredient__iexact=medicine.active_ingredient
+            ).exclude(pk=medicine.pk)
+
+            for med in same_qs:
+                seen_ids.add(med.pk)
+                conflicts.append({
+                    "conflict_type": "same_active_ingredient",
+                    "risk_level": "high",
+                    "conflict_reason": (
+                        f"Contains the same active ingredient: {medicine.active_ingredient}. "
+                        "Taking both may cause duplication or overdose."
+                    ),
+                    "matched_ingredient": medicine.active_ingredient,
+                    "medicine": MedicineSerializer(med).data,
+                })
+
+        # ── 2. Similar / interacting active ingredients ───────────────────────
+        if medicine.similar_active_ingredients.strip():
+            raw_ingredients = re.split(r"[,;\n]+", medicine.similar_active_ingredients)
+            parsed = [i.strip() for i in raw_ingredients if len(i.strip()) >= 3]
+
+            for ingredient in parsed:
+                similar_qs = Medicine.objects.filter(
+                    active_ingredient__icontains=ingredient
+                ).exclude(pk__in=seen_ids)
+
+                for med in similar_qs:
+                    seen_ids.add(med.pk)
+                    conflicts.append({
+                        "conflict_type": "similar_active_ingredient",
+                        "risk_level": "medium",
+                        "conflict_reason": (
+                            f"Contains a similar or interacting ingredient: {ingredient}. "
+                            "Consult a pharmacist before combining."
+                        ),
+                        "matched_ingredient": ingredient,
+                        "medicine": MedicineSerializer(med).data,
+                    })
+
+        return Response({
+            "medicine": MedicineSerializer(medicine).data,
+            "interaction_notes": medicine.interaction_notes,
+            "similarity_risk_symptoms": medicine.similarity_risk_symptoms,
+            "switching_note": medicine.switching_note,
+            "total_conflicts": len(conflicts),
+            "conflicts": conflicts,
+        })
+
+
+class MedicationReminderViewSet(viewsets.ModelViewSet):
+    serializer_class = MedicationReminderSerializer
+    permission_classes = [IsAuthenticated]
+
+    def get_queryset(self):
+        queryset = (
+            MedicationReminder.objects.select_related("medicine")
+            .filter(user=self.request.user)
+        )
+        is_active = self.request.query_params.get("is_active")
+        if is_active in {"true", "false"}:
+            queryset = queryset.filter(is_active=is_active == "true")
+        return queryset
+
+    def perform_create(self, serializer):
+        serializer.save(user=self.request.user)
+
+    @action(detail=True, methods=["get", "post"], url_path="events")
+    def events(self, request, pk=None):
+        reminder = self.get_object()
+
+        if request.method == "GET":
+            serializer = ReminderEventSerializer(reminder.events.all(), many=True)
+            return Response(serializer.data)
+
+        serializer = ReminderEventSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        serializer.save(reminder=reminder)
+        return Response(serializer.data, status=status.HTTP_201_CREATED)
+
+
+class OCRMedicineSearchView(APIView):
+    parser_classes = [MultiPartParser, FormParser]
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request, *args, **kwargs):
+        req_started = perf_counter()
+        decode_started = None
+        ocr_started = None
+        search_started = None
+
+        image_file = request.FILES.get("image")
+        if image_file is None:
+            return Response(
+                {"error": "No image provided. Send a multipart field named 'image'."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        upload_limit = _max_upload_bytes()
+        incoming_size = getattr(image_file, "size", None)
+        if incoming_size is not None and incoming_size > upload_limit:
+            logger.warning(
+                "OCR upload rejected: size=%s max=%s user_id=%s",
+                incoming_size,
+                upload_limit,
+                request.user.id,
+            )
+            return Response(
+                {"error": f"Uploaded image exceeds size limit ({upload_limit} bytes)."},
+                status=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
+            )
+
+        try:
+            top_k = int(request.data.get("top_k", getattr(settings, "OCR_MAX_CANDIDATES", 5)))
+        except (TypeError, ValueError):
+            return Response({"error": "top_k must be an integer."}, status=status.HTTP_400_BAD_REQUEST)
+        top_k = min(max(top_k, 1), 20)
+
+        try:
+            decode_started = perf_counter()
+            image_bytes = image_file.read()
+            Image.MAX_IMAGE_PIXELS = 40_000_000  # ~40 MP — reject decompression bombs
+            pil_img = Image.open(io.BytesIO(image_bytes))
+            pil_img.load()  # force full decode so PIL catches corrupt/bomb images early
+            image_rgb = _pil_to_rgb_array(pil_img)
+        except Exception:
+            logger.exception("Image decode failed")
+            return Response({"error": "Cannot decode the provided image."}, status=status.HTTP_400_BAD_REQUEST)
+
+        try:
+            ocr_started = perf_counter()
+            tokens, meta = _ocr_tokens_from_image(image_rgb)
+        except Exception:
+            logger.exception("OCR pipeline failed")
+            return Response({"error": "OCR processing failed. Please try again."}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+        search_started = perf_counter()
+
+        if not tokens:
+            tier = "low"
+            action = _response_action(tier)
+            message = "Could not confidently read medicine text. Please retake the photo in good light and focus."
+            logger.info(
+                "ocr_search_result user_id=%s tier=%s action=%s ocr_conf=%.4f top_score=%.4f matches=%s reason=no_tokens",
+                request.user.id,
+                tier,
+                action,
+                float(meta["confidence"]),
+                0.0,
+                0,
+            )
+            decode_ms = ((ocr_started - decode_started) * 1000.0) if (decode_started and ocr_started) else 0.0
+            ocr_ms = ((search_started - ocr_started) * 1000.0) if ocr_started else 0.0
+            total_ms = (perf_counter() - req_started) * 1000.0
+            logger.info(
+                "ocr_search_timing user_id=%s decode_ms=%.1f ocr_ms=%.1f search_ms=%.1f total_ms=%.1f tokens=%s matches=%s",
+                request.user.id,
+                decode_ms,
+                ocr_ms,
+                0.0,
+                total_ms,
+                0,
+                0,
+            )
+            return Response(
+                {
+                    "ocr_raw_text": "",
+                    "ocr_confidence": meta["confidence"],
+                    "ocr_angle": meta["angle"],
+                    "ocr_engine": meta["engine"],
+                    "ocr_tokens": [],
+                    "matches": [],
+                    "match_confidence_tier": tier,
+                    "action_hint": action,
+                    "message": message,
+                },
+                status=status.HTTP_200_OK,
+            )
+
+        seen: dict[int, dict[str, Any]] = {}
+        phrase_token = tokens[0]
+        phrase_hits: list[dict[str, Any]] = []
+        if " " in phrase_token:
+            phrase_hits = _fuzzy_search_medicines(phrase_token, limit=top_k, query_weight=1.25)
+            for hit in phrase_hits:
+                seen[hit["id"]] = hit
+
+        phrase_gate = float(getattr(settings, "OCR_RESULT_FLOOR", 0.60))
+        phrase_ok = bool(phrase_hits) and max(hit["score"] for hit in phrase_hits) >= phrase_gate
+        for idx, token in enumerate(tokens):
+            if idx == 0:
+                continue
+            query_weight = 1.0
+            if phrase_ok and " " in phrase_token:
+                query_weight = 1.05
+            for hit in _fuzzy_search_medicines(token, limit=top_k, query_weight=query_weight):
+                med_id = hit["id"]
+                if med_id not in seen or hit["_rank_score"] > seen[med_id]["_rank_score"]:
+                    seen[med_id] = hit
+
+        result_floor = float(getattr(settings, "OCR_RESULT_FLOOR", 0.60))
+        matches = [item for item in seen.values() if float(item.get("score", 0.0)) >= result_floor]
+        matches = sorted(matches, key=lambda item: item["_rank_score"], reverse=True)
+
+        top_score = float(matches[0]["score"]) if matches else 0.0
+        tier = _confidence_tier(float(meta["confidence"]), top_score)
+        action = _response_action(tier)
+        low_tier_cap = int(getattr(settings, "OCR_LOW_CONFIDENCE_MAX_RESULTS", 2))
+        if tier == "low":
+            top_k = min(top_k, low_tier_cap)
+        matches = matches[:top_k]
+
+        for match in matches:
+            match.pop("_rank_score", None)
+
+        message = ""
+        if tier == "low":
+            message = "Low confidence result. Please retake the photo in brighter light and ensure the name is centered."
+
+        logger.info(
+            (
+                "ocr_search_result user_id=%s tier=%s action=%s ocr_conf=%.4f top_score=%.4f "
+                "matches=%s tokens=%s low_confidence=%s retake=%s no_result=%s"
+            ),
+            request.user.id,
+            tier,
+            action,
+            float(meta["confidence"]),
+            top_score,
+            len(matches),
+            len(tokens),
+            int(tier == "low"),
+            int(action == "retake_photo"),
+            int(not matches),
+        )
+
+        decode_ms = ((ocr_started - decode_started) * 1000.0) if (decode_started and ocr_started) else 0.0
+        ocr_ms = ((search_started - ocr_started) * 1000.0) if ocr_started else 0.0
+        search_ms = (perf_counter() - search_started) * 1000.0 if search_started else 0.0
+        total_ms = (perf_counter() - req_started) * 1000.0
+        logger.info(
+            "ocr_search_timing user_id=%s decode_ms=%.1f ocr_ms=%.1f search_ms=%.1f total_ms=%.1f tokens=%s matches=%s",
+            request.user.id,
+            decode_ms,
+            ocr_ms,
+            search_ms,
+            total_ms,
+            len(tokens),
+            len(matches),
+        )
+
+        return Response(
+            {
+                "ocr_raw_text": tokens[0],
+                "ocr_confidence": meta["confidence"],
+                "ocr_angle": meta["angle"],
+                "ocr_engine": meta["engine"],
+                "ocr_tokens": tokens,
+                "matches": matches,
+                "match_confidence_tier": tier,
+                "action_hint": action,
+                "message": message,
+            },
+            status=status.HTTP_200_OK,
+        )

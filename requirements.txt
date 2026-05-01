@@ -1,0 +1,13 @@
+django
+django-environ
+django-cors-headers
+djangorestframework
+djangorestframework-simplejwt
+drf-spectacular
+pillow
+numpy
+opencv-python-headless
+rapidfuzz
+easyocr
+pytesseract
+ultralytics

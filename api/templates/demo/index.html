@@ -1,0 +1,328 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Medicine OCR Demo</title>
+  {% load static %}
+  <link rel="stylesheet" href="{% static 'demo/app.css' %}" />
+</head>
+<body>
+  <div class="ambient ambient-a" aria-hidden="true"></div>
+  <div class="ambient ambient-b" aria-hidden="true"></div>
+
+  <div class="app-shell">
+    <header class="topbar" role="banner">
+      <div class="brand">
+        <p class="kicker">Medicine OCR Pipeline</p>
+        <h1>Clinical Demo Console</h1>
+      </div>
+      <div class="command-bar" role="status" aria-live="polite">
+        <div class="chip" id="sessionChip">Guest session</div>
+        <div class="chip chip-soft" id="tokenChip">Token: Missing</div>
+        <button id="logoutBtn" class="btn ghost" type="button">Logout</button>
+      </div>
+    </header>
+
+    <main class="workspace">
+      <nav class="module-rail" aria-label="Primary modules">
+        <button class="rail-btn active" data-tab="dashboard">Dashboard</button>
+        <button class="rail-btn" data-tab="ocr">OCR</button>
+        <button class="rail-btn" data-tab="medicines">Medicines</button>
+        <button class="rail-btn" data-tab="reminders">Reminders</button>
+        <button class="rail-btn" data-tab="medical">Medical Record</button>
+        <button class="rail-btn" data-tab="auth">Auth</button>
+      </nav>
+
+      <section class="surface" aria-live="polite">
+        <div id="toast" class="toast hidden" role="alert"></div>
+        <header class="context-head">
+          <div>
+            <h2 id="contextTitle">Today&apos;s Tasks</h2>
+            <p id="contextSubtitle">Pick a workflow to run an end-to-end demo quickly.</p>
+          </div>
+          <div class="action-bar">
+            <button class="btn secondary" data-jump="ocr" type="button">Scan Medicine</button>
+            <button class="btn secondary" data-jump="reminders" type="button">Schedule Reminder</button>
+            <button class="btn secondary" data-jump="medical" type="button">Update Record</button>
+          </div>
+        </header>
+
+        <section class="tab active" id="tab-dashboard" aria-labelledby="contextTitle">
+          <div class="grid cards-4">
+            <button class="card task" data-jump="ocr" type="button">
+              <h3>1. Scan Medicine</h3>
+              <p>Upload pack image and extract text with confidence guidance.</p>
+            </button>
+            <button class="card task" data-jump="medicines" type="button">
+              <h3>2. Review Match</h3>
+              <p>Inspect medicine details and interaction risks.</p>
+            </button>
+            <button class="card task" data-jump="reminders" type="button">
+              <h3>3. Schedule Dose</h3>
+              <p>Create reminders and log adherence events.</p>
+            </button>
+            <button class="card task" data-jump="medical" type="button">
+              <h3>4. Update Record</h3>
+              <p>Add diagnosis, labs, vitals, and visits.</p>
+            </button>
+          </div>
+          <div class="grid split-2">
+            <article class="card">
+              <h3>Demo Readiness</h3>
+              <ul class="clean-list" id="readinessList"></ul>
+            </article>
+            <article class="card">
+              <h3>Session Profile</h3>
+              <pre id="meOutput" class="codeblock">Not loaded.</pre>
+              <button class="btn ghost" id="refreshMeBtn" type="button">Refresh Profile</button>
+            </article>
+          </div>
+        </section>
+
+        <section class="tab" id="tab-auth">
+          <div class="segmented" role="tablist" aria-label="Auth mode">
+            <button class="seg-btn active" data-auth-mode="login" type="button">Login</button>
+            <button class="seg-btn" data-auth-mode="register" type="button">Register</button>
+          </div>
+
+          <div class="grid split-2">
+            <form id="loginForm" class="card form auth-mode active" data-auth-panel="login">
+              <h3>Sign In</h3>
+              <label>Username <input name="username" required autocomplete="username" /></label>
+              <label>Password <input type="password" name="password" required autocomplete="current-password" /></label>
+              <div class="inline-errors" id="loginErrors"></div>
+              <button class="btn" type="submit">Login</button>
+            </form>
+
+            <form id="registerForm" class="card form auth-mode" data-auth-panel="register">
+              <h3>Create Account</h3>
+              <label>Username <input name="username" required /></label>
+              <label>Email <input type="email" name="email" required /></label>
+              <label>First name <input name="first_name" /></label>
+              <label>Last name <input name="last_name" /></label>
+              <label>Password <input type="password" name="password" required /></label>
+              <label>Confirm password <input type="password" name="password2" required /></label>
+              <div class="inline-errors" id="registerErrors"></div>
+              <button class="btn" type="submit">Register</button>
+            </form>
+          </div>
+        </section>
+
+        <section class="tab" id="tab-ocr">
+          <div class="grid split-2">
+            <form id="ocrForm" class="card form">
+              <h3>Upload for OCR</h3>
+              <label class="dropzone" for="ocrImageInput">
+                <span class="drop-title">Drop image or click to browse</span>
+                <span class="drop-meta" id="ocrFileMeta">PNG/JPG up to backend limit</span>
+                <input id="ocrImageInput" type="file" name="image" accept="image/*" required />
+              </label>
+              <div class="camera-panel">
+                <div class="camera-head">
+                  <strong>Or scan with camera</strong>
+                  <span class="drop-meta" id="ocrCameraMeta">Camera is off</span>
+                </div>
+                <video id="ocrCameraPreview" class="camera-preview hidden" playsinline muted></video>
+                <canvas id="ocrCameraCanvas" class="camera-preview hidden" aria-label="Captured image preview"></canvas>
+                <div class="action-row">
+                  <button class="btn secondary" id="ocrStartCameraBtn" type="button">Start Camera</button>
+                  <button class="btn ghost" id="ocrCaptureBtn" type="button">Capture</button>
+                  <button class="btn ghost" id="ocrRetakeBtn" type="button">Retake</button>
+                </div>
+              </div>
+              <label>Top K candidates <input type="number" name="top_k" value="5" min="1" max="20" /></label>
+              <button class="btn" type="submit">Run OCR Search</button>
+            </form>
+
+            <article class="card" id="ocrSummaryCard">
+              <h3>OCR Result</h3>
+              <div id="ocrSummary" class="empty">No OCR run yet.</div>
+              <details>
+                <summary>Developer details</summary>
+                <pre id="ocrOutput" class="codeblock">No OCR result yet.</pre>
+              </details>
+            </article>
+          </div>
+          <article class="card">
+            <h3>Ranked Matches</h3>
+            <div id="ocrMatches" class="stack"></div>
+          </article>
+        </section>
+
+        <section class="tab" id="tab-medicines">
+          <form id="medicineSearchForm" class="card form inline-form">
+            <label>Search medicine <input name="search" placeholder="panadol" /></label>
+            <div class="action-row">
+              <button class="btn" type="submit">Search</button>
+              <button class="btn ghost" id="clearMedicineSearch" type="button">Clear</button>
+              <span class="chip" id="medicineCountChip">0 results</span>
+            </div>
+          </form>
+
+          <div class="grid split-2">
+            <article class="card">
+              <h3>Medicine List</h3>
+              <div id="medicineList" class="stack"></div>
+            </article>
+            <article class="card">
+              <h3>Details & Interactions</h3>
+              <div id="medicineDetailPanel" class="empty">Select a medicine to inspect details.</div>
+            </article>
+          </div>
+        </section>
+
+        <section class="tab" id="tab-reminders">
+          <div class="grid split-2">
+            <form id="reminderForm" class="card form">
+              <h3>Create Reminder</h3>
+              <label>Medicine name <input name="medicine_name" required /></label>
+              <label>Dose <input name="dose" required /></label>
+              <label>Times (comma HH:MM) <input name="times" value="08:00,20:00" required /></label>
+              <label>Start date <input type="date" name="start_date" required /></label>
+              <label>End date <input type="date" name="end_date" /></label>
+              <label>Timezone <input name="timezone" value="Africa/Cairo" /></label>
+              <label>Notes <textarea name="notes"></textarea></label>
+              <label class="inline-check"><input type="checkbox" name="is_active" checked /> Active</label>
+              <button class="btn" type="submit">Create Reminder</button>
+            </form>
+
+            <article class="card">
+              <h3>Reminder Events</h3>
+              <div id="reminderEventsPanel" class="empty">Pick a reminder and open events.</div>
+            </article>
+          </div>
+
+          <article class="card">
+            <h3>Reminder Timeline</h3>
+            <div id="reminderList" class="stack"></div>
+          </article>
+        </section>
+
+        <section class="tab" id="tab-medical">
+          <div class="grid split-2">
+            <form id="recordForm" class="card form">
+              <h3>Patient Profile</h3>
+              <label>Date of birth <input type="date" name="date_of_birth" /></label>
+              <label>Gender
+                <select name="gender">
+                  <option value="">--</option>
+                  <option value="M">Male</option>
+                  <option value="F">Female</option>
+                  <option value="other">Other</option>
+                </select>
+              </label>
+              <label>Blood type
+                <select name="blood_type">
+                  <option value="">--</option>
+                  <option>A+</option><option>A-</option><option>B+</option><option>B-</option>
+                  <option>AB+</option><option>AB-</option><option>O+</option><option>O-</option><option>unknown</option>
+                </select>
+              </label>
+              <label>Height cm <input type="number" step="0.1" name="height_cm" /></label>
+              <label>Weight kg <input type="number" step="0.1" name="weight_kg" /></label>
+              <label>Phone <input name="phone_number" /></label>
+              <label>Emergency contact <input name="emergency_contact_name" /></label>
+              <label>Emergency phone <input name="emergency_contact_phone" /></label>
+              <label>Notes <textarea name="notes"></textarea></label>
+              <button class="btn" type="submit">Save Profile</button>
+            </form>
+
+            <div class="stack">
+              <form id="diagnosisForm" class="card form compact">
+                <h3>Add Diagnosis</h3>
+                <label>Condition <input name="condition_name" required /></label>
+                <label>Status
+                  <select name="status"><option>active</option><option>chronic</option><option>resolved</option></select>
+                </label>
+                <label>Date <input type="date" name="diagnosed_date" /></label>
+                <button class="btn" type="submit">Add Diagnosis</button>
+              </form>
+
+              <form id="allergyForm" class="card form compact">
+                <h3>Add Allergy</h3>
+                <label>Allergen <input name="allergen" required /></label>
+                <label>Type
+                  <select name="allergen_type"><option>drug</option><option>food</option><option>environmental</option><option>other</option></select>
+                </label>
+                <label>Severity
+                  <select name="severity"><option>mild</option><option>moderate</option><option>severe</option></select>
+                </label>
+                <button class="btn" type="submit">Add Allergy</button>
+              </form>
+
+              <form id="vitalForm" class="card form compact">
+                <h3>Add Vitals</h3>
+                <label>Recorded at <input type="datetime-local" name="recorded_at" required /></label>
+                <label>Heart rate <input type="number" name="heart_rate" /></label>
+                <label>Temp C <input type="number" step="0.1" name="temperature_celsius" /></label>
+                <button class="btn" type="submit">Add Vitals</button>
+              </form>
+
+              <form id="labForm" class="card form compact">
+                <h3>Add Lab</h3>
+                <label>Test <input name="test_name" required /></label>
+                <label>Value <input name="result_value" required /></label>
+                <label>Date <input type="date" name="recorded_at" required /></label>
+                <label class="inline-check"><input type="checkbox" name="is_abnormal" /> Abnormal</label>
+                <button class="btn" type="submit">Add Lab</button>
+              </form>
+
+              <form id="visitForm" class="card form compact">
+                <h3>Add Visit</h3>
+                <label>Visit date <input type="date" name="visit_date" required /></label>
+                <label>Reason <textarea name="reason" required></textarea></label>
+                <button class="btn" type="submit">Add Visit</button>
+              </form>
+            </div>
+          </div>
+
+          <article class="card">
+            <h3>Medical Summary</h3>
+            <div id="medicalSummaryPanel" class="stack"></div>
+            <details>
+              <summary>Developer details</summary>
+              <pre id="medicalSummary" class="codeblock">No medical summary loaded.</pre>
+            </details>
+          </article>
+        </section>
+      </section>
+    </main>
+  </div>
+
+  <dialog id="eventModal" class="modal">
+    <form id="eventForm" class="form" method="dialog">
+      <h3>Log Reminder Event</h3>
+      <input type="hidden" name="reminder_id" />
+      <label>Status
+        <select name="status">
+          <option value="scheduled">scheduled</option>
+          <option value="taken">taken</option>
+          <option value="missed">missed</option>
+          <option value="skipped">skipped</option>
+        </select>
+      </label>
+      <label>Scheduled at <input type="datetime-local" name="scheduled_at" required /></label>
+      <label>Taken at (if taken) <input type="datetime-local" name="taken_at" /></label>
+      <label>Notes <textarea name="notes"></textarea></label>
+      <div class="action-row">
+        <button class="btn" type="submit">Save Event</button>
+        <button class="btn ghost" id="cancelEventModal" type="button">Cancel</button>
+      </div>
+    </form>
+  </dialog>
+
+  <dialog id="confirmModal" class="modal">
+    <article class="card form">
+      <h3>Confirm deletion</h3>
+      <p id="confirmText">Are you sure?</p>
+      <div class="action-row">
+        <button id="confirmDeleteBtn" class="btn danger" type="button">Delete</button>
+        <button id="cancelDeleteBtn" class="btn ghost" type="button">Cancel</button>
+      </div>
+    </article>
+  </dialog>
+
+  <script src="{% static 'demo/app.js' %}"></script>
+</body>
+</html>

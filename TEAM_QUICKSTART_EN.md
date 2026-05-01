@@ -2,7 +2,10 @@
 
 Language: [English](TEAM_QUICKSTART_EN.md) | [العربية](TEAM_QUICKSTART_AR.md)
 
-This file helps any teammate run the project from scratch, test OCR search, and verify output quickly.
+This quickstart is operational only. For exact behavior/contracts, use:
+- [docs/api-contracts.md](docs/api-contracts.md)
+- [docs/config-security-ops.md](docs/config-security-ops.md)
+- [docs/system-architecture.md](docs/system-architecture.md)
 
 ## 1) Prerequisites
 
@@ -17,9 +20,7 @@ macOS:
 brew install tesseract
 ```
 
-## 2) First-Time Environment Setup
-
-From project root:
+## 2) Setup
 
 ```bash
 python3 -m venv .venv
@@ -27,39 +28,35 @@ source .venv/bin/activate
 pip install -r requirements.txt
 ```
 
-## 3) Database and Seed Data
+## 3) Database + Seed
 
 ```bash
 python3 manage.py migrate
 python3 manage.py import_medicines --path medicines.csv
 ```
 
-Note: `import_medicines` performs create/update by `trade_name`.
-
-## 4) Run Backend
+## 4) Run Server
 
 ```bash
 python3 manage.py runserver 127.0.0.1:8000
 ```
 
-API base URL:
+Optional helper scripts:
 
-```text
-http://127.0.0.1:8000/api/
+```bash
+bash scripts/run_app.sh
+bash scripts/stop_app.sh
 ```
 
-## 5) Routing and API Docs
+## 5) Main Entrypoints
 
-- `GET /` -> `302` redirect to `/api/docs/`
-- `GET /api/docs/` Swagger UI
-- `GET /api/schema/` OpenAPI schema
-- `GET /api/redoc/` ReDoc
+- `GET /` -> `302` to `/api/docs/`
+- `GET /api/docs/`
+- `GET /api/schema/`
+- `GET /api/redoc/`
+- `GET /demo/`
 
-## 6) Authentication
-
-Most endpoints are protected and require JWT Bearer auth.
-
-Get token:
+## 6) Get JWT Token
 
 ```bash
 curl -X POST "http://127.0.0.1:8000/api/auth/token/" \
@@ -67,26 +64,11 @@ curl -X POST "http://127.0.0.1:8000/api/auth/token/" \
   -d '{"username":"<username>","password":"<password>"}'
 ```
 
-Use access token:
+Use token:
 
-```text
-Authorization: Bearer <access_token>
-```
+`Authorization: Bearer <access_token>`
 
-## 7) Key Endpoints
-
-- `GET /api/medicines/`
-- `GET /api/medicines/?search=panadol`
-- `GET /api/medicines/{id}/`
-- `GET /api/medicines/{id}/interactions/`
-- `POST /api/uploads/ocr-search/`
-- `GET/POST /api/reminders/`
-- `PATCH/DELETE /api/reminders/{id}/`
-- `GET/POST /api/reminders/{id}/events/`
-- `GET/PATCH/PUT /api/medical-record/`
-- `GET /api/medical-record/summary/`
-
-## 8) OCR Search Test from Terminal
+## 7) OCR Upload Smoke Test
 
 ```bash
 curl -X POST "http://127.0.0.1:8000/api/uploads/ocr-search/" \
@@ -95,73 +77,31 @@ curl -X POST "http://127.0.0.1:8000/api/uploads/ocr-search/" \
   -F "top_k=5"
 ```
 
-Expected response shape includes:
-
-- `ocr_raw_text`
+Expected contract keys include:
 - `ocr_confidence`
-- `ocr_tokens`
-- `matches`
-- `match_confidence_tier` (`high|medium|low`)
-- `action_hint` (`show_results|retake_photo`)
+- `matched_items`
+- `match_confidence_tier`
+- `action_hint`
+- `message`
+- `processing_time_ms`
 
-## 9) OCR Behavior Notes
-
-- If `drug_detector.pt` is missing, full-image OCR fallback is used automatically.
-- OCR tries phrase and token matching, and token fallback still runs when phrase confidence is weak.
-
-## 10) CLI OCR Without Django
+## 8) Local CLI OCR (No Django)
 
 ```bash
 python3 cli_ocr_search.py sample_medicine.png --catalog medicines.csv --column trade_name
 ```
 
-Useful for quick OCR/fuzzy checks without starting the server.
-
-## 11) Postman
-
-Import both files:
-
-- `postman/Medicine_OCR_API.postman_collection.json`
-- `postman/Medicine_OCR_API.postman_environment.json`
-
-## 12) YOLO (Optional)
-
-If you have a trained model (`drug_detector.pt`):
-
-- Place it in project root next to `manage.py`, or
-- Update `YOLO_MODEL_PATH` in `medicine_backend/settings.py`
-
-## 13) Common Issues
-
-1. `ModuleNotFoundError: No module named 'django'`
-   - Activate venv: `source .venv/bin/activate`
-   - Install deps: `pip install -r requirements.txt`
-
-2. Tesseract not found
-   - Install it at system level (`brew install tesseract` on macOS)
-
-3. OCR returns empty `matches`
-   - Confirm `medicines.csv` was imported.
-   - Use a clearer image.
-   - Try higher `top_k` (for example 10).
-
-4. `YOLO model not found`
-   - Normal when `drug_detector.pt` is absent.
-   - System continues with full-image OCR fallback.
-
-## 14) Quick Delivery Check
+## 9) Validation Commands
 
 ```bash
-python3 manage.py migrate
-python3 manage.py import_medicines --path medicines.csv
-python3 manage.py runserver 127.0.0.1:8000
+python3 manage.py check
+python3 manage.py test -v 2
+bash scripts/check_docs_consistency.sh
 ```
 
-Then in another terminal:
+## 10) Reference
 
-```bash
-curl -X POST "http://127.0.0.1:8000/api/uploads/ocr-search/" \
-  -H "Authorization: Bearer <access_token>" \
-  -F "image=@sample_medicine.png" \
-  -F "top_k=5"
-```
+Use this data source to find more medicines:
+`http://eservices.edaegypt.gov.eg/EDASearch/SearchRegDrugs.aspx`
+
+Arabic quickstart sync is pending this English refresh.

@@ -201,18 +201,18 @@
 
   function renderOCRSummary(data) {
     const tier = data.match_confidence_tier || "low";
+    const confidencePct = Math.round((Number(data.ocr_confidence) || 0) * 100);
     $("#ocrSummary").innerHTML = `
       <div class="stack">
-        <div class="metric"><span class="chip">Text</span><strong>${data.ocr_raw_text || "-"}</strong></div>
-        <div class="metric"><span class="chip">Engine</span><span>${data.ocr_engine || "-"}</span></div>
-        <div class="metric"><span class="chip">Angle</span><span>${data.ocr_angle ?? "-"}</span></div>
+        <div class="metric"><span class="chip">OCR Confidence</span><strong>${confidencePct}%</strong></div>
+        <div class="metric"><span class="chip">Processing Time</span><span>${data.processing_time_ms ?? "-"} ms</span></div>
         <div class="metric"><span class="chip">Action</span><span>${data.action_hint || "-"}</span></div>
         <span class="badge ${tier}">Confidence: ${tier}</span>
         ${data.message ? `<div class="empty">${data.message}</div>` : ""}
       </div>
     `;
 
-    const matches = Array.isArray(data.matches) ? data.matches : [];
+    const matches = Array.isArray(data.matched_items) ? data.matched_items : [];
     if (!matches.length) {
       $("#ocrMatches").innerHTML = '<div class="empty">No matched medicines.</div>';
       return;
@@ -220,12 +220,16 @@
 
     $("#ocrMatches").innerHTML = matches.map((m) => {
       const score = Math.round((Number(m.score) || 0) * 100);
+      const rankScore = Number(m._rank_score);
+      const rankLabel = Number.isFinite(rankScore) ? rankScore.toFixed(4) : "N/A";
       return `
         <article class="card">
           <div class="metric"><strong>${m.trade_name || m.name}</strong><span class="badge medium">${score}%</span></div>
           <div class="score"><span style="width:${score}%"></span></div>
           <div>${m.active_ingredient || "N/A"}</div>
           <div>${m.strength || "N/A"} • ${m.dosage_form || "N/A"}</div>
+          <div class="metric"><span class="chip">Rank score</span><span>${rankLabel}</span></div>
+          <div class="metric"><span class="chip">Matched token</span><span>${m.matched_query || "N/A"}</span></div>
           ${m.id ? `<div class="action-row"><button class="btn ghost" data-ocr-detail="${m.id}" type="button">Show details</button></div>` : ""}
         </article>
       `;

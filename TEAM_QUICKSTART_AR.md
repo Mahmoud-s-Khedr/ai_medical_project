@@ -4,6 +4,8 @@
 
 الملف ده معمول عشان أي حد في الفريق يقدر يشغل المشروع من الصفر، يجرب OCR search، ويتأكد من المخرجات بسرعة.
 
+استخدم الرابط ده للبحث عن أدوية إضافية: http://eservices.edaegypt.gov.eg/EDASearch/SearchRegDrugs.aspx
+
 ## 1) المتطلبات قبل التشغيل
 
 - macOS أو Linux

@@ -1,9 +1,11 @@
 from __future__ import annotations
 
 import io
+import tempfile
 from datetime import date
 from unittest.mock import patch
 
+from django.core.management import call_command
 from django.contrib.auth import get_user_model
 from django.contrib.auth.tokens import PasswordResetTokenGenerator
 from django.db import IntegrityError, connection
@@ -527,11 +529,11 @@ class OCRSearchTests(APITestCase):
             **auth_header(self.user),
         )
         self.assertEqual(resp.status_code, status.HTTP_200_OK)
-        self.assertIn("matches", resp.data)
-        self.assertIn("ocr_tokens", resp.data)
+        self.assertIn("matched_items", resp.data)
         self.assertIn("match_confidence_tier", resp.data)
         self.assertIn("action_hint", resp.data)
         self.assertIn("message", resp.data)
+        self.assertIn("processing_time_ms", resp.data)
 
     def test_ocr_invalid_top_k(self):
         img_bytes = make_png_image_bytes()
@@ -575,11 +577,12 @@ class OCRSearchTests(APITestCase):
         with self.settings(OCR_RESULT_FLOOR=0.6):
             resp = self.client.post(self.URL, {"image": img_bytes}, format="multipart", **auth_header(self.user))
         self.assertEqual(resp.status_code, status.HTTP_200_OK)
-        names = [row["name"] for row in resp.data["matches"]]
+        names = [row["name"] for row in resp.data["matched_items"]]
         self.assertIn("Panadol Extra", names)
         self.assertIn("Panadol", names)
         self.assertNotIn("Amoxil", names)
         self.assertNotIn("RandomMed", names)
+        self.assertTrue(all("_rank_score" in row for row in resp.data["matched_items"]))
 
     @patch("api.views._fuzzy_search_medicines", return_value=[])
     @patch("api.views._ocr_tokens_from_image", return_value=(["Unreadable"], {"confidence": 0.25, "angle": 0, "engine": "mock"}))
@@ -602,8 +605,29 @@ class OCRSearchTests(APITestCase):
         with self.settings(OCR_RESULT_FLOOR=0.6):
             resp = self.client.post(self.URL, {"image": img_bytes}, format="multipart", **auth_header(self.user))
         self.assertEqual(resp.status_code, status.HTTP_200_OK)
-        names = [row["name"] for row in resp.data["matches"]]
+        names = [row["name"] for row in resp.data["matched_items"]]
         self.assertIn("Panadol", names)
+
+    def test_prepare_ocr_candidates_filters_short_stopwords_and_numbers(self):
+        with self.settings(OCR_MIN_TOKEN_LENGTH=3, OCR_TOKEN_STOPWORDS="of,for,and,the"):
+            candidates = api_views._prepare_ocr_candidates("Miconaz of FOR 20 and gel")
+        self.assertTrue(candidates)
+        self.assertEqual(candidates[0], "miconaz of for 20 and gel")
+        self.assertIn("miconaz", candidates)
+        self.assertIn("gel", candidates)
+        self.assertNotIn("of", candidates)
+        self.assertNotIn("for", candidates)
+        self.assertNotIn("20", candidates)
+
+    def test_ocr_includes_debug_fields_when_enabled(self):
+        with self.settings(OCR_INCLUDE_MATCH_DEBUG=True):
+            rows = api_views._fuzzy_search_medicines("Panadol", limit=3)
+        self.assertTrue(rows)
+        first = rows[0]
+        self.assertIn("debug_length_factor", first)
+        self.assertIn("debug_length_ratio", first)
+        self.assertIn("debug_query_length", first)
+        self.assertIn("debug_matched_length", first)
 
 
 class OCRMedicineCacheTests(APITestCase):
@@ -649,6 +673,86 @@ class CombinedSearchServiceTests(APITestCase):
     def test_ranked_search_empty_query_returns_empty(self):
         rows = search_medicines_ranked("   ", limit=5)
         self.assertEqual(rows, [])
+
+    def test_length_penalty_reduces_short_token_rank_score(self):
+        with self.settings(SEARCH_LENGTH_PENALTY_ENABLED=True, SEARCH_LENGTH_PENALTY_STRENGTH=1.6):
+            rows = search_medicines_ranked("of", limit=5)
+        self.assertTrue(rows)
+        self.assertTrue(all(row["_rank_score"] <= row["score"] for row in rows))
+
+    def test_disable_length_penalty_preserves_ranking_signal(self):
+        with self.settings(SEARCH_LENGTH_PENALTY_ENABLED=False):
+            rows = search_medicines_ranked("Panadol", limit=5)
+        self.assertTrue(rows)
+        self.assertTrue(all("_debug_length_factor" in row for row in rows))
+        self.assertTrue(all(row["_debug_length_factor"] == 1.0 for row in rows))
+
+    def test_alias_query_improves_recall(self):
+        target = make_medicine(
+            trade_name="Miconaz Oral Gel",
+            active_ingredient="Miconazole nitrate",
+            search_aliases="miconazole gel; miconaz",
+            trade_name_norm="miconaz oral gel",
+            active_ingredient_norm="miconazole nitrate",
+            drug_class_norm="topical oral antifungal",
+            active_ingredient_tokens="miconazole nitrate; miconazole",
+        )
+        rows = search_medicines_ranked("miconaz", limit=5)
+        self.assertTrue(rows)
+        ids = [row["medicine"].id for row in rows]
+        self.assertIn(target.id, ids)
+
+    def test_ingredient_token_query_matches_brand(self):
+        target = make_medicine(
+            trade_name="Augmentin",
+            active_ingredient="Amoxicillin + Clavulanic acid",
+            search_aliases="co amoxiclav",
+            trade_name_norm="augmentin",
+            active_ingredient_norm="amoxicillin clavulanic acid",
+            drug_class_norm="penicillin antibiotic",
+            active_ingredient_tokens="amoxicillin; clavulanic acid",
+        )
+        rows = search_medicines_ranked("clavulanic acid", limit=5)
+        self.assertTrue(rows)
+        self.assertEqual(rows[0]["medicine"].id, target.id)
+
+
+class MedicineImportEnrichmentTests(APITestCase):
+    def test_import_medicines_derives_search_fields_for_legacy_csv(self):
+        csv_content = (
+            "trade_name,active_ingredient,strength,dosage_form,drug_class,common_side_effects,serious_warning,"
+            "similar_active_ingredients,similarity_risk_symptoms,switching_note,interaction_notes\n"
+            "TestBrand,Alpha + Beta,10 mg,tablet,test class,,,,,,\n"
+        )
+        with tempfile.NamedTemporaryFile("w+", suffix=".csv", encoding="utf-8", delete=False) as handle:
+            handle.write(csv_content)
+            handle.flush()
+            call_command("import_medicines", path=handle.name)
+
+        med = Medicine.objects.get(trade_name="TestBrand")
+        self.assertEqual(med.trade_name_norm, "testbrand")
+        self.assertEqual(med.active_ingredient_norm, "alpha beta")
+        self.assertEqual(med.drug_class_norm, "test class")
+        self.assertIn("alpha", med.active_ingredient_tokens)
+        self.assertIn("testbrand", med.search_aliases)
+
+    def test_backfill_command_populates_missing_search_fields(self):
+        med = make_medicine(
+            trade_name="BackfillMed",
+            active_ingredient="Gamma / Delta",
+            drug_class="Sample Class",
+            search_aliases="",
+            trade_name_norm="",
+            active_ingredient_norm="",
+            drug_class_norm="",
+            active_ingredient_tokens="",
+        )
+        call_command("backfill_medicine_search_fields")
+        med.refresh_from_db()
+        self.assertEqual(med.trade_name_norm, "backfillmed")
+        self.assertEqual(med.active_ingredient_norm, "gamma delta")
+        self.assertEqual(med.drug_class_norm, "sample class")
+        self.assertIn("gamma", med.active_ingredient_tokens)
 
 
 # ─────────────────────────────────────────────────────────────

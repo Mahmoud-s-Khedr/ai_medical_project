@@ -6,10 +6,10 @@
 
 - Auth endpoints documented: yes
 - Medicines + interactions documented: yes
-- OCR upload search documented: yes
+- OCR upload search documented (with `matched_items` contract): yes
 - Reminders + events documented: yes
 - Medical record aggregate + child resources documented: yes
-- Root/docs/demo routes documented in architecture/ops docs: yes
+- Root/docs/demo routes documented: yes
 
 ### Configuration Impacting Runtime Behavior
 
@@ -18,21 +18,23 @@
 - Upload limits documented: yes
 - OCR/search tunables documented: yes
 - CORS and host behavior documented: yes
+- Behavior-changing OCR toggles documented: yes
 
 ### Critical Fallback Behaviors
 
-- YOLO model missing -> full-image OCR fallback: documented and observed
+- YOLO model missing/import/inference fail -> full-image OCR fallback: documented
 - EasyOCR/Tesseract orchestration + skip condition: documented
 - No OCR tokens -> low-confidence retake response: documented
-- Low confidence -> result cap/action hint behavior: documented
+- Low confidence -> response cap/action hint behavior: documented
 
-## Mismatch Notes vs Existing Top-Level Docs
+## Anti-Drift Controls Added
 
-- `README.md` recommends Python 3.11/3.12, while local venv/test run used Python 3.14 successfully in this environment.
-- `README.md` example for OCR response is representative, but live response keys and confidence semantics are now explicitly captured in `docs/api-contracts.md` and `docs/verification-evidence.md`.
+- Code-first policy and authoritative source list in `docs/INDEX.md`.
+- `scripts/check_docs_consistency.sh` for repeatable non-mutating docs checks.
+- Verification checklist in `docs/verification-evidence.md`.
 
 ## Known Gaps / Follow-up
 
-1. Add explicit API error-code matrix per endpoint (currently documented at group level).
-2. Add sequence diagrams for OCR happy path vs fallback path.
-3. Add benchmark section for OCR/search latency with and without YOLO model file present.
+1. Arabic documentation parity update is pending (`README_AR.md`, `TEAM_QUICKSTART_AR.md`).
+2. Endpoint-by-endpoint error-code table can be expanded beyond group-level semantics.
+3. OCR/search latency benchmark table is still not documented.

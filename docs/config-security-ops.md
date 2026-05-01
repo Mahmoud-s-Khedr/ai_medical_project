@@ -1,84 +1,120 @@
 # Configuration, Security, and Operations
 
-## Configuration Interface
-
 Primary source: `medicine_backend/settings.py`.
 
-### Core Runtime
+## Core Runtime Settings
 
-- `DEBUG`
-- `SECRET_KEY`
-- `ALLOWED_HOSTS`
-- `DATABASE_URL`
-- `TIME_ZONE` (default `Africa/Cairo`)
+- `SECRET_KEY` default: `dev-only-medicine-ocr-secret-key`
+- `DEBUG` default: `True`
+- `ALLOWED_HOSTS` default: `127.0.0.1,localhost`
+- `DATABASE_URL` default: sqlite at `db.sqlite3`
+- `TIME_ZONE`: `Africa/Cairo`
 
-### CORS
+## Upload and Request Guardrails
 
-- `CORS_ALLOWED_ORIGINS`
-- `CORS_ALLOW_ALL_ORIGINS`
-- `CORS_ALLOW_CREDENTIALS`
+- `DATA_UPLOAD_MAX_MEMORY_SIZE` default: `8388608` (8 MB)
+- `FILE_UPLOAD_MAX_MEMORY_SIZE` default: `8388608` (8 MB)
+- `OCR_MAX_UPLOAD_BYTES` default: `8388608` (8 MB)
 
-### Upload and Request Guards
+OCR upload path behavior:
+- Rejects upload over `OCR_MAX_UPLOAD_BYTES` with `413`.
+- Applies PIL decompression guard `Image.MAX_IMAGE_PIXELS = 40_000_000`.
 
-- `DATA_UPLOAD_MAX_MEMORY_SIZE`
-- `FILE_UPLOAD_MAX_MEMORY_SIZE`
-- `OCR_MAX_UPLOAD_BYTES`
+## CORS
 
-### Auth/JWT
+- `CORS_ALLOWED_ORIGINS` default: empty list
+- `CORS_ALLOW_ALL_ORIGINS` default: `True`
+- `CORS_ALLOW_CREDENTIALS` fixed: `True`
 
-- SimpleJWT access lifetime: 1 hour
-- SimpleJWT refresh lifetime: 30 days
-- Refresh rotation and blacklisting enabled
-- Password reset timeout: 24h (`PASSWORD_RESET_TIMEOUT`)
+Note: literal `*` entries are stripped from `CORS_ALLOWED_ORIGINS` in settings.
 
-### DRF Runtime Defaults
+## DRF and Auth Runtime
 
-- Default permission class: authenticated
-- Throttle classes: anon + user
-- Throttle rates:
-- `anon: 30/hour`
-- `user: 1000/day`
-- `auth: 10/hour` (scope used by register/password reset views)
-- Pagination class: `api.pagination.StandardPagination`
+REST defaults:
+- Default auth: `JWTAuthentication`
+- Default permission: `IsAuthenticated`
+- Default pagination: `api.pagination.StandardPagination`
+- Default page size: `20`
+- Schema class: drf-spectacular `AutoSchema`
 
-### OCR/Search Tuning
+Throttling:
+- Classes: `AnonRateThrottle`, `UserRateThrottle`
+- Rates:
+- `anon = 30/hour`
+- `user = 1000/day`
+- `auth = 10/hour` (used by register/password-reset endpoints via scoped throttle)
 
-- OCR thresholds/caps:
-- `OCR_MAX_CANDIDATES`
-- `OCR_MIN_SCORE`
-- `OCR_RESULT_FLOOR`
-- `OCR_LOW_CONFIDENCE_THRESHOLD`
-- `OCR_HIGH_CONFIDENCE_THRESHOLD`
-- `OCR_LOW_CONFIDENCE_MAX_RESULTS`
-- `OCR_MEDICINE_CACHE_TTL_SECONDS`
-- `YOLO_MODEL_PATH`
-- Search tuning:
-- `SEARCH_COMBINED_TOP_K`
-- `SEARCH_FUZZY_MIN_SCORE`
-- `SEARCH_FULLTEXT_WEIGHT`
-- `SEARCH_FUZZY_WEIGHT`
-- `SEARCH_CANDIDATE_EXPANSION`
-- `SEARCH_MEDICINE_CACHE_TTL_SECONDS`
+JWT (`SIMPLE_JWT`):
+- `ACCESS_TOKEN_LIFETIME`: 1 hour
+- `REFRESH_TOKEN_LIFETIME`: 30 days
+- Rotate refresh tokens: enabled
+- Blacklist after rotation: enabled
+- Header type: `Bearer`
+- Update last login: enabled
 
-## Security and Access Model
+Password reset:
+- `PASSWORD_RESET_TIMEOUT = 86400` seconds (24h)
+- Reset link uses `FRONTEND_URL` (default `http://localhost:3000`)
 
-- API defaults to authenticated-only access.
-- Medicine writes are admin/staff only (`IsAdminOrReadOnly`).
-- Reminders and medical-record resources are user-scoped by queryset.
-- Logout blacklists refresh tokens to invalidate future refresh use.
-- Password reset request response is intentionally non-enumerating.
-- OCR upload includes size checks and PIL decode safety guard.
+## OCR and Search Tunables
+
+OCR controls:
+- `OCR_MAX_CANDIDATES` default `5`
+- `OCR_MIN_SCORE` default `0.55`
+- `OCR_RESULT_FLOOR` default `0.60`
+- `OCR_LOW_CONFIDENCE_THRESHOLD` default `0.72`
+- `OCR_HIGH_CONFIDENCE_THRESHOLD` default `0.85`
+- `OCR_LOW_CONFIDENCE_MAX_RESULTS` default `2`
+- `OCR_MEDICINE_NAME_FIELD` fixed `trade_name`
+- `OCR_MEDICINE_CACHE_TTL_SECONDS` default `300`
+- `OCR_ROTATION_ANGLES` default `0,-10,10,-20,20`
+- `OCR_EARLY_EXIT_CONFIDENCE` default `0.90`
+- `OCR_SKIP_TESSERACT_IF_EASYOCR_CONFIDENT` default `0.88`
+- `OCR_USE_TESSERACT` default `False`
+- `OCR_MIN_TOKEN_LENGTH` default `3`
+- `OCR_TOKEN_STOPWORDS` default common English stopwords list
+- `OCR_PHRASE_STRONG_SCORE` default `0.85`
+- `OCR_INCLUDE_MATCH_DEBUG` default `True`
+
+Search controls:
+- `SEARCH_COMBINED_TOP_K` default `200`
+- `SEARCH_FUZZY_MIN_SCORE` default `0.45`
+- `SEARCH_FULLTEXT_WEIGHT` default `0.60`
+- `SEARCH_FUZZY_WEIGHT` default `0.40`
+- `SEARCH_CANDIDATE_EXPANSION` default `4`
+- `SEARCH_MEDICINE_CACHE_TTL_SECONDS` default `300`
+- `SEARCH_LENGTH_PENALTY_ENABLED` default `True`
+- `SEARCH_LENGTH_PENALTY_STRENGTH` default `2.2`
+- `SEARCH_LENGTH_RATIO_FLOOR` default `0.35`
+- `SEARCH_ALIAS_BOOST_WEIGHT` default `0.10`
+- `SEARCH_INGREDIENT_BOOST_WEIGHT` default `0.10`
+- `SEARCH_COVERAGE_BOOST_WEIGHT` default `0.06`
+- `SEARCH_DRUG_CLASS_PENALTY_WEIGHT` default `0.05`
+
+## Behavior Toggles That Change Runtime Results
+
+- `YOLO_MODEL_PATH`: if missing/unloadable/inference failure, OCR falls back to full-image path.
+- `OCR_USE_TESSERACT`: enables Tesseract execution in rotation loop.
+- `OCR_SKIP_TESSERACT_IF_EASYOCR_CONFIDENT`: skips Tesseract when EasyOCR confidence is high enough.
+- `OCR_ROTATION_ANGLES`: controls orientation candidates.
+- `OCR_RESULT_FLOOR`: minimum accepted ranked match score.
+- `OCR_LOW_CONFIDENCE_MAX_RESULTS`: additional cap applied to low-tier responses.
 
 ## Operational Commands
 
-- Migrate DB: `python manage.py migrate`
-- Import catalog: `python manage.py import_medicines --path medicines.csv`
-- Test suite: `python manage.py test -v 2`
-- Run server: `python manage.py runserver 127.0.0.1:8000`
-- CLI OCR test: `python cli_ocr_search.py sample_medicine.png --catalog medicines.csv --column trade_name`
+- `python manage.py check`
+- `python manage.py migrate --noinput`
+- `python manage.py import_medicines --path medicines.csv`
+- `python manage.py test -v 2`
+- `python manage.py runserver 127.0.0.1:8000`
+- `python cli_ocr_search.py sample_medicine.png --catalog medicines.csv --column trade_name`
 
-## Troubleshooting
+## Docs Consistency Check (Non-Mutating)
 
-- If YOLO model is missing, OCR still works via full-image fallback (warning logged).
-- If Tesseract binary is missing, EasyOCR remains active and Tesseract is skipped.
-- `400 Bad Request` on local scripted calls can be caused by `ALLOWED_HOSTS` mismatch (use allowed host).
+Run the docs check helper:
+
+```bash
+bash scripts/check_docs_consistency.sh
+```
+
+This validates endpoint coverage anchors, `matched_items` naming, and key runtime-setting references.

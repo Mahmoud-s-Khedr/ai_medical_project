@@ -2,6 +2,28 @@
 
 Audience: backend engineers onboarding to this repository.
 
+## Code-First Documentation Policy
+
+Documentation in this folder is derived from code and tests, not from prior prose.
+
+Authoritative sources:
+- `medicine_backend/settings.py`
+- `medicine_backend/urls.py`
+- `api/urls.py`
+- `api/views.py`
+- `api/auth_views.py`
+- `api/medical_views.py`
+- `api/serializers.py`
+- `api/pagination.py`
+- `api/tests.py`
+- `api/management/commands/*.py`
+
+Rules:
+- Any behavior claim must map to one of the sources above.
+- Public `/api/` endpoints and security boundaries must be documented.
+- Runtime-impacting settings and critical fallback behavior must be documented.
+- When code and docs conflict, code wins and docs must be updated in the same change.
+
 ## Sections
 
 1. [System Architecture](./system-architecture.md)
@@ -12,14 +34,6 @@ Audience: backend engineers onboarding to this repository.
 6. [Verification Evidence](./verification-evidence.md)
 7. [Contributor Safe Change Guide](./safe-change-guide.md)
 8. [Coverage Audit and Gap Register](./coverage-audit-and-gaps.md)
-
-## Source-of-Truth Code Boundaries
-
-- Project/runtime config: `medicine_backend/`
-- Application API/domain logic: `api/`
-- OCR runtime logic: `ai/`
-- Operational tooling: `tools/`
-- Local non-Django OCR flow: `cli_ocr_search.py`, `ocr_medicine_search.py`
 
 ## Documentation Quality Gates
 

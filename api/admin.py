@@ -18,7 +18,7 @@ from .models import (
 @admin.register(Medicine)
 class MedicineAdmin(admin.ModelAdmin):
     list_display = ("trade_name", "active_ingredient", "strength", "dosage_form")
-    search_fields = ("trade_name", "active_ingredient")
+    search_fields = ("trade_name", "active_ingredient", "search_aliases")
 
 
 @admin.register(MedicationReminder)
@@ -72,4 +72,3 @@ class LabResultAdmin(admin.ModelAdmin):
 class DoctorVisitAdmin(admin.ModelAdmin):
     list_display = ("visit_date", "doctor_name", "specialty", "reason", "record")
     search_fields = ("doctor_name", "specialty")
-

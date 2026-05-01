@@ -35,6 +35,10 @@ _MEDICINE_CACHE: dict[str, Any] = {
     "items": [],
 }
 
+_DEFAULT_OCR_STOPWORDS = {
+    "a", "an", "and", "at", "by", "for", "from", "in", "of", "on", "or", "the", "to", "with",
+}
+
 
 def _ocr_angles() -> tuple[int, ...]:
     raw = str(getattr(settings, "OCR_ROTATION_ANGLES", "0,-10,10,-20,20"))
@@ -125,11 +129,44 @@ def _ocr_tokens_from_image(image_rgb: np.ndarray) -> tuple[list[str], dict[str, 
         if not best_text:
             continue
 
-        tokens = [token.strip() for token in best_text.split() if len(token.strip()) >= 2]
-        if tokens:
-            candidates.extend([" ".join(tokens), *tokens])
+        normalized_candidates = _prepare_ocr_candidates(best_text)
+        if normalized_candidates:
+            candidates.extend(normalized_candidates)
 
     return list(dict.fromkeys(candidates)), best_meta
+
+
+def _normalized_stopwords() -> set[str]:
+    raw = str(getattr(settings, "OCR_TOKEN_STOPWORDS", ",".join(sorted(_DEFAULT_OCR_STOPWORDS))))
+    parsed = {normalize for normalize in (item.strip().lower() for item in raw.split(",")) if normalize}
+    return parsed or set(_DEFAULT_OCR_STOPWORDS)
+
+
+def _normalize_ocr_token(token: str) -> str:
+    stripped = re.sub(r"(^[^\w]+|[^\w]+$)", "", token.strip().lower())
+    return re.sub(r"\s+", " ", stripped).strip()
+
+
+def _prepare_ocr_candidates(raw_text: str) -> list[str]:
+    min_token_len = int(getattr(settings, "OCR_MIN_TOKEN_LENGTH", 3))
+    stopwords = _normalized_stopwords()
+    normalized_tokens = [_normalize_ocr_token(chunk) for chunk in raw_text.split()]
+    normalized_tokens = [token for token in normalized_tokens if token]
+    if not normalized_tokens:
+        return []
+
+    phrase_token = " ".join(normalized_tokens)
+    filtered_tokens: list[str] = []
+    for token in normalized_tokens:
+        if len(token) < min_token_len:
+            continue
+        if token in stopwords:
+            continue
+        if re.fullmatch(r"\d+", token):
+            continue
+        filtered_tokens.append(token)
+
+    return [phrase_token, *filtered_tokens]
 
 
 def _load_medicine_index() -> list[tuple[int, str]]:
@@ -147,8 +184,18 @@ def _load_medicine_index() -> list[tuple[int, str]]:
     return rows
 
 
-def _fuzzy_search_medicines(query: str, limit: int, query_weight: float = 1.0) -> list[dict[str, Any]]:
-    ranked = search_medicines_ranked(query, limit=limit, query_weight=query_weight)
+def _fuzzy_search_medicines(
+    query: str,
+    limit: int,
+    query_weight: float = 1.0,
+    length_penalty_strength_multiplier: float = 1.0,
+) -> list[dict[str, Any]]:
+    ranked = search_medicines_ranked(
+        query,
+        limit=limit,
+        query_weight=query_weight,
+        length_penalty_strength_multiplier=length_penalty_strength_multiplier,
+    )
     results: list[dict[str, Any]] = []
     for item in ranked:
         medicine = item["medicine"]
@@ -157,6 +204,10 @@ def _fuzzy_search_medicines(query: str, limit: int, query_weight: float = 1.0) -
         serialized["score"] = item["score"]
         serialized["_rank_score"] = item["_rank_score"]
         serialized["matched_query"] = item["matched_query"]
+        serialized["debug_length_factor"] = item["_debug_length_factor"]
+        serialized["debug_length_ratio"] = item["_debug_length_ratio"]
+        serialized["debug_query_length"] = item["_debug_query_len"]
+        serialized["debug_matched_length"] = item["_debug_match_len"]
         results.append(serialized)
     return results
 
@@ -364,7 +415,7 @@ class OCRMedicineSearchView(APIView):
             decode_ms = ((ocr_started - decode_started) * 1000.0) if (decode_started and ocr_started) else 0.0
             ocr_ms = ((search_started - ocr_started) * 1000.0) if ocr_started else 0.0
             total_ms = (perf_counter() - req_started) * 1000.0
-            logger.info(
+            logger.warning(
                 "ocr_search_timing user_id=%s decode_ms=%.1f ocr_ms=%.1f search_ms=%.1f total_ms=%.1f tokens=%s matches=%s",
                 request.user.id,
                 decode_ms,
@@ -376,15 +427,12 @@ class OCRMedicineSearchView(APIView):
             )
             return Response(
                 {
-                    "ocr_raw_text": "",
                     "ocr_confidence": meta["confidence"],
-                    "ocr_angle": meta["angle"],
-                    "ocr_engine": meta["engine"],
-                    "ocr_tokens": [],
-                    "matches": [],
+                    "matched_items": [],
                     "match_confidence_tier": tier,
                     "action_hint": action,
                     "message": message,
+                    "processing_time_ms": round(total_ms, 1),
                 },
                 status=status.HTTP_200_OK,
             )
@@ -392,20 +440,42 @@ class OCRMedicineSearchView(APIView):
         seen: dict[int, dict[str, Any]] = {}
         phrase_token = tokens[0]
         phrase_hits: list[dict[str, Any]] = []
+        phrase_top_score = 0.0
         if " " in phrase_token:
-            phrase_hits = _fuzzy_search_medicines(phrase_token, limit=top_k, query_weight=1.25)
+            phrase_hits = _fuzzy_search_medicines(
+                phrase_token,
+                limit=top_k,
+                query_weight=1.25,
+                length_penalty_strength_multiplier=1.0,
+            )
             for hit in phrase_hits:
                 seen[hit["id"]] = hit
+            if phrase_hits:
+                phrase_top_score = max(float(hit.get("score", 0.0)) for hit in phrase_hits)
 
         phrase_gate = float(getattr(settings, "OCR_RESULT_FLOOR", 0.60))
-        phrase_ok = bool(phrase_hits) and max(hit["score"] for hit in phrase_hits) >= phrase_gate
+        phrase_ok = bool(phrase_hits) and phrase_top_score >= phrase_gate
+        strong_phrase_threshold = float(getattr(settings, "OCR_PHRASE_STRONG_SCORE", 0.85))
         for idx, token in enumerate(tokens):
             if idx == 0:
                 continue
             query_weight = 1.0
+            penalty_multiplier = 1.0
             if phrase_ok and " " in phrase_token:
-                query_weight = 1.05
-            for hit in _fuzzy_search_medicines(token, limit=top_k, query_weight=query_weight):
+                query_weight = 0.90
+                penalty_multiplier = 1.15
+                if phrase_top_score >= strong_phrase_threshold:
+                    query_weight = 0.80
+                    penalty_multiplier = 1.25
+            elif not phrase_ok:
+                query_weight = 0.85
+                penalty_multiplier = 1.35
+            for hit in _fuzzy_search_medicines(
+                token,
+                limit=top_k,
+                query_weight=query_weight,
+                length_penalty_strength_multiplier=penalty_multiplier,
+            ):
                 med_id = hit["id"]
                 if med_id not in seen or hit["_rank_score"] > seen[med_id]["_rank_score"]:
                     seen[med_id] = hit
@@ -421,9 +491,6 @@ class OCRMedicineSearchView(APIView):
         if tier == "low":
             top_k = min(top_k, low_tier_cap)
         matches = matches[:top_k]
-
-        for match in matches:
-            match.pop("_rank_score", None)
 
         message = ""
         if tier == "low":
@@ -450,7 +517,7 @@ class OCRMedicineSearchView(APIView):
         ocr_ms = ((search_started - ocr_started) * 1000.0) if ocr_started else 0.0
         search_ms = (perf_counter() - search_started) * 1000.0 if search_started else 0.0
         total_ms = (perf_counter() - req_started) * 1000.0
-        logger.info(
+        logger.warning(
             "ocr_search_timing user_id=%s decode_ms=%.1f ocr_ms=%.1f search_ms=%.1f total_ms=%.1f tokens=%s matches=%s",
             request.user.id,
             decode_ms,
@@ -463,15 +530,12 @@ class OCRMedicineSearchView(APIView):
 
         return Response(
             {
-                "ocr_raw_text": tokens[0],
                 "ocr_confidence": meta["confidence"],
-                "ocr_angle": meta["angle"],
-                "ocr_engine": meta["engine"],
-                "ocr_tokens": tokens,
-                "matches": matches,
+                "matched_items": matches,
                 "match_confidence_tier": tier,
                 "action_hint": action,
                 "message": message,
+                "processing_time_ms": round(total_ms, 1),
             },
             status=status.HTTP_200_OK,
         )

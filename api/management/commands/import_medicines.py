@@ -5,6 +5,7 @@ from pathlib import Path
 
 from django.core.management.base import BaseCommand, CommandError
 
+from api.medicine_search_enrichment import build_aliases, normalize_text, split_ingredient_tokens
 from api.models import Medicine
 
 
@@ -33,6 +34,11 @@ class Command(BaseCommand):
                     "strength": row.get("strength", "").strip(),
                     "dosage_form": row.get("dosage_form", "").strip(),
                     "drug_class": row.get("drug_class", "").strip(),
+                    "search_aliases": row.get("search_aliases", "").strip(),
+                    "trade_name_norm": row.get("trade_name_norm", "").strip(),
+                    "active_ingredient_norm": row.get("active_ingredient_norm", "").strip(),
+                    "drug_class_norm": row.get("drug_class_norm", "").strip(),
+                    "active_ingredient_tokens": row.get("active_ingredient_tokens", "").strip(),
                     "common_side_effects": row.get("common_side_effects", "").strip(),
                     "serious_warning": row.get("serious_warning", "").strip(),
                     "similar_active_ingredients": row.get("similar_active_ingredients", "").strip(),
@@ -40,6 +46,21 @@ class Command(BaseCommand):
                     "switching_note": row.get("switching_note", "").strip(),
                     "interaction_notes": row.get("interaction_notes", "").strip(),
                 }
+
+                active_ingredient = defaults["active_ingredient"]
+                drug_class = defaults["drug_class"]
+                aliases = defaults["search_aliases"]
+                defaults["trade_name_norm"] = defaults["trade_name_norm"] or normalize_text(trade_name)
+                defaults["active_ingredient_norm"] = defaults["active_ingredient_norm"] or normalize_text(active_ingredient)
+                defaults["drug_class_norm"] = defaults["drug_class_norm"] or normalize_text(drug_class)
+                defaults["active_ingredient_tokens"] = defaults["active_ingredient_tokens"] or "; ".join(
+                    split_ingredient_tokens(active_ingredient)
+                )
+                defaults["search_aliases"] = defaults["search_aliases"] or build_aliases(
+                    trade_name,
+                    active_ingredient,
+                    explicit_aliases=aliases,
+                )
                 _medicine, was_created = Medicine.objects.update_or_create(
                     trade_name=trade_name,
                     defaults=defaults,
@@ -50,4 +71,3 @@ class Command(BaseCommand):
                     updated += 1
 
         self.stdout.write(self.style.SUCCESS(f"Imported medicines. created={created}, updated={updated}"))
-

@@ -20,6 +20,8 @@
       <div class="command-bar" role="status" aria-live="polite">
         <div class="chip" id="sessionChip">Guest session</div>
         <div class="chip chip-soft" id="tokenChip">Token: Missing</div>
+        <div class="chip chip-soft" id="roleChip">Role: Unauthenticated</div>
+        <div class="chip chip-soft" id="apiKeyModeChip">API Key Mode: Off</div>
         <button id="logoutBtn" class="btn ghost" type="button">Logout</button>
       </div>
     </header>
@@ -27,10 +29,14 @@
     <main class="workspace">
       <nav class="module-rail" aria-label="Primary modules">
         <button class="rail-btn active" data-tab="dashboard">Dashboard</button>
+        <button class="rail-btn" data-tab="auth">Auth</button>
+        <button class="rail-btn" data-tab="security">Account Security</button>
         <button class="rail-btn" data-tab="ocr">OCR</button>
         <button class="rail-btn" data-tab="medicines">Medicines</button>
         <button class="rail-btn" data-tab="history">Medicine History</button>
-        <button class="rail-btn" data-tab="auth">Auth</button>
+        <button class="rail-btn" data-tab="integrations">Integrations</button>
+        <button class="rail-btn" data-tab="external">External API</button>
+        <button class="rail-btn" data-tab="exports">Exports</button>
       </nav>
 
       <section class="surface" aria-live="polite">
@@ -42,27 +48,27 @@
           </div>
           <div class="action-bar">
             <button class="btn secondary" data-jump="ocr" type="button">Scan Medicine</button>
-            <button class="btn secondary" data-jump="history" type="button">Update History</button>
+            <button class="btn secondary" data-jump="integrations" type="button">Integration Flow</button>
           </div>
         </header>
 
         <section class="tab active" id="tab-dashboard" aria-labelledby="contextTitle">
           <div class="grid cards-4">
-            <button class="card task" data-jump="ocr" type="button">
-              <h3>1. Scan Medicine</h3>
-              <p>Upload pack image and extract text with confidence guidance.</p>
+            <button class="card task" data-jump="auth" type="button">
+              <h3>1. Authenticate</h3>
+              <p>Register or sign in and initialize JWT session.</p>
             </button>
-            <button class="card task" data-jump="medicines" type="button">
-              <h3>2. Review Match</h3>
-              <p>Inspect medicine details and interaction risks.</p>
+            <button class="card task" data-jump="ocr" type="button">
+              <h3>2. Scan Medicine</h3>
+              <p>Upload image or capture from camera for OCR lookup.</p>
             </button>
             <button class="card task" data-jump="history" type="button">
-              <h3>3. Track History</h3>
-              <p>Store current or past medicine usage for the user.</p>
+              <h3>3. Track Usage</h3>
+              <p>Manage medicine history timeline entries.</p>
             </button>
-            <button class="card task" data-jump="auth" type="button">
-              <h3>4. Manage Access</h3>
-              <p>Sign in or register to access protected APIs.</p>
+            <button class="card task" data-jump="integrations" type="button">
+              <h3>4. Integrate</h3>
+              <p>Create app/key, process access requests, and simulate external access.</p>
             </button>
           </div>
           <div class="grid split-2">
@@ -83,16 +89,13 @@
             <button class="seg-btn active" data-auth-mode="login" type="button">Login</button>
             <button class="seg-btn" data-auth-mode="register" type="button">Register</button>
           </div>
-
           <div class="grid split-2">
             <form id="loginForm" class="card form auth-mode active" data-auth-panel="login">
               <h3>Sign In</h3>
               <label>Username <input name="username" required autocomplete="username" /></label>
               <label>Password <input type="password" name="password" required autocomplete="current-password" /></label>
-              <div class="inline-errors" id="loginErrors"></div>
               <button class="btn" type="submit">Login</button>
             </form>
-
             <form id="registerForm" class="card form auth-mode" data-auth-panel="register">
               <h3>Create Account</h3>
               <label>Username <input name="username" required /></label>
@@ -101,10 +104,38 @@
               <label>Last name <input name="last_name" /></label>
               <label>Password <input type="password" name="password" required /></label>
               <label>Confirm password <input type="password" name="password2" required /></label>
-              <div class="inline-errors" id="registerErrors"></div>
               <button class="btn" type="submit">Register</button>
             </form>
           </div>
+        </section>
+
+        <section class="tab" id="tab-security">
+          <div class="grid split-2">
+            <form id="changePasswordForm" class="card form">
+              <h3>Change Password</h3>
+              <label>Current password <input type="password" name="old_password" required /></label>
+              <label>New password <input type="password" name="new_password" required /></label>
+              <label>Confirm new password <input type="password" name="new_password2" required /></label>
+              <button class="btn" type="submit">Update Password</button>
+            </form>
+            <form id="passwordResetRequestForm" class="card form">
+              <h3>Password Reset Request</h3>
+              <label>Email <input type="email" name="email" required /></label>
+              <button class="btn secondary" type="submit">Send Reset Request</button>
+            </form>
+          </div>
+          <form id="passwordResetConfirmForm" class="card form">
+            <h3>Password Reset Confirm</h3>
+            <div class="grid split-2">
+              <label>UID <input name="uid" required /></label>
+              <label>Token <input name="token" required /></label>
+            </div>
+            <div class="grid split-2">
+              <label>New password <input type="password" name="new_password" required /></label>
+              <label>Confirm new password <input type="password" name="new_password2" required /></label>
+            </div>
+            <button class="btn" type="submit">Confirm Password Reset</button>
+          </form>
         </section>
 
         <section class="tab" id="tab-ocr">
@@ -159,6 +190,10 @@
               <span class="chip" id="medicineCountChip">0 results</span>
             </div>
           </form>
+          <article class="card capability-note">
+            <h3>Staff-Only Catalog Write Endpoints</h3>
+            <p>POST/PUT/PATCH/DELETE on <code>/api/medicines/</code> require staff permissions. This UI intentionally stays read-only for medicine catalog writes.</p>
+          </article>
 
           <div class="grid split-2">
             <article class="card">
@@ -218,6 +253,120 @@
             <div id="historyList" class="stack"></div>
           </article>
         </section>
+
+        <section class="tab" id="tab-integrations">
+          <div class="grid split-2">
+            <form id="appCreateForm" class="card form">
+              <h3>Create Developer App</h3>
+              <label>App name <input name="name" required /></label>
+              <label>Description <textarea name="description"></textarea></label>
+              <button class="btn" type="submit">Create App</button>
+            </form>
+            <form id="appEditForm" class="card form">
+              <h3>Update / Delete App</h3>
+              <label>App ID <input type="number" name="id" required /></label>
+              <label>New name <input name="name" /></label>
+              <label>New description <textarea name="description"></textarea></label>
+              <label class="inline-check"><input type="checkbox" name="is_active" value="1" /> Set active</label>
+              <div class="action-row">
+                <button class="btn secondary" type="submit">Update App</button>
+                <button class="btn danger" id="deleteAppBtn" type="button">Delete App</button>
+              </div>
+            </form>
+          </div>
+          <article class="card">
+            <h3>Developer Apps</h3>
+            <div class="action-row"><button class="btn ghost" id="refreshAppsBtn" type="button">Refresh Apps</button></div>
+            <pre id="appsOutput" class="codeblock">No data yet.</pre>
+          </article>
+
+          <div class="grid split-2">
+            <form id="keyCreateForm" class="card form">
+              <h3>Create API Key (Shown Once)</h3>
+              <label>App ID <input type="number" name="app" required /></label>
+              <label>Key name <input name="name" required /></label>
+              <button class="btn" type="submit">Create Key</button>
+            </form>
+            <form id="keyRevokeForm" class="card form">
+              <h3>Revoke API Key</h3>
+              <label>Key ID <input type="number" name="key_id" required /></label>
+              <button class="btn danger" type="submit">Revoke Key</button>
+            </form>
+          </div>
+          <article class="card">
+            <h3>Developer Keys</h3>
+            <div class="action-row"><button class="btn ghost" id="refreshKeysBtn" type="button">Refresh Keys</button></div>
+            <div id="keyWarning" class="empty hidden"></div>
+            <pre id="keysOutput" class="codeblock">No data yet.</pre>
+          </article>
+
+          <article class="card">
+            <h3>Access Request Inbox</h3>
+            <div class="action-row"><button class="btn ghost" id="refreshInboxBtn" type="button">Refresh Inbox</button></div>
+            <div id="inboxList" class="stack"></div>
+          </article>
+
+          <form id="inboxDecisionForm" class="card form inline-form">
+            <label>Request ID <input type="number" name="request_id" required /></label>
+            <label>Decision
+              <select name="decision">
+                <option value="approve">approve</option>
+                <option value="reject">reject</option>
+                <option value="revoke">revoke</option>
+              </select>
+            </label>
+            <label>Decision note <input name="decision_note" /></label>
+            <button class="btn secondary" type="submit">Submit Decision</button>
+          </form>
+        </section>
+
+        <section class="tab" id="tab-external">
+          <article class="card">
+            <h3>External API Key Mode</h3>
+            <form id="apiKeyModeForm" class="form inline-form">
+              <label>Raw API Key <input name="api_key" placeholder="dev_..." /></label>
+              <div class="action-row">
+                <button class="btn secondary" type="submit">Activate Key Mode</button>
+                <button class="btn ghost" id="clearApiKeyModeBtn" type="button">Clear</button>
+              </div>
+            </form>
+          </article>
+
+          <div class="grid split-2">
+            <form id="externalRequestForm" class="card form">
+              <h3>Create External Access Request</h3>
+              <label>Target username <input name="username" required /></label>
+              <label>Purpose <textarea name="purpose"></textarea></label>
+              <button class="btn" type="submit">Request Access</button>
+            </form>
+            <form id="externalFetchForm" class="card form">
+              <h3>Fetch External Medicine History</h3>
+              <label>Target username <input name="username" required /></label>
+              <label>Format
+                <select name="format">
+                  <option value="json">json</option>
+                  <option value="xml">xml</option>
+                </select>
+              </label>
+              <button class="btn secondary" type="submit">Fetch History</button>
+            </form>
+          </div>
+          <article class="card">
+            <h3>External API Response</h3>
+            <pre id="externalOutput" class="codeblock">No data yet.</pre>
+          </article>
+        </section>
+
+        <section class="tab" id="tab-exports">
+          <article class="card">
+            <h3>Medicine History XML Export</h3>
+            <p class="drop-meta">Calls <code>/api/integrations/medicine-history/export.xml</code> with JWT.</p>
+            <div class="action-row">
+              <button class="btn" id="runExportBtn" type="button">Run Export</button>
+            </div>
+            <pre id="exportOutput" class="codeblock">No export yet.</pre>
+          </article>
+        </section>
       </section>
     </main>
   </div>
@@ -233,6 +382,6 @@
     </article>
   </dialog>
 
-  <script src="{% static 'demo/app.js' %}?v=2026-05-03-camera-ocr-ui"></script>
+  <script src="{% static 'demo/app.js' %}?v=2026-05-03-full-console"></script>
 </body>
 </html>

@@ -3,11 +3,15 @@
   const $$ = (selector) => Array.from(document.querySelectorAll(selector));
 
   const TABS = {
-    dashboard: { title: "Today's Tasks", subtitle: "Pick a workflow to run an end-to-end demo quickly." },
+    dashboard: { title: "Today's Tasks", subtitle: "Run complete end-to-end user and integration workflows." },
+    auth: { title: "Authentication", subtitle: "Sign in or register to access protected APIs." },
+    security: { title: "Account Security", subtitle: "Change password and execute password reset lifecycle endpoints." },
     ocr: { title: "OCR Scan", subtitle: "Upload package photo and evaluate confidence-driven results." },
-    medicines: { title: "Medicine Lookup", subtitle: "Search, inspect details, and evaluate interactions." },
-    history: { title: "Medicine History", subtitle: "Track medicines user is taking now or took in the past." },
-    auth: { title: "Authentication", subtitle: "Manage login and account creation." },
+    medicines: { title: "Medicine Lookup", subtitle: "Search, inspect details, and review interaction risks." },
+    history: { title: "Medicine History", subtitle: "Track current/past medicine usage and timeline updates." },
+    integrations: { title: "Integrations", subtitle: "Manage apps/keys and approve or reject access requests." },
+    external: { title: "External API Simulation", subtitle: "Use API key auth to request and fetch approved user data." },
+    exports: { title: "Exports", subtitle: "Run XML export of authenticated user medicine history." },
   };
 
   const state = {
@@ -20,6 +24,7 @@
     cameraStream: null,
     cameraCaptureBlob: null,
     cameraSnapshotUrl: "",
+    externalApiKey: localStorage.getItem("demo_external_api_key") || "",
   };
 
   function showToast(message, type = "success") {
@@ -31,6 +36,7 @@
   }
 
   function pretty(data) {
+    if (typeof data === "string") return data;
     return JSON.stringify(data, null, 2);
   }
 
@@ -48,6 +54,32 @@
       if (v !== null && v !== "") copy[k] = v;
     });
     return copy;
+  }
+
+  // Contract guard for POST /api/integrations/keys/: backend expects `app_id` (not `app`).
+  function mapApiKeyCreatePayload(raw) {
+    const payload = cleanObject(raw);
+    if (payload.app !== undefined) {
+      payload.app_id = Number(payload.app);
+      delete payload.app;
+    }
+    return payload;
+  }
+
+  // Contract guard for PATCH /api/integrations/apps/{id}/: partial update should send only intended fields.
+  function mapAppPatchPayload(raw) {
+    const payload = {};
+    if (raw.name) payload.name = raw.name;
+    if (raw.description) payload.description = raw.description;
+    if (Object.prototype.hasOwnProperty.call(raw, "is_active")) payload.is_active = true;
+    return payload;
+  }
+
+  // Contract guard for DataAccessRequest response: requester field is `requester_username`.
+  function mapInboxRow(row) {
+    return Object.assign({}, row, {
+      requester_display: row.requester_username || "N/A",
+    });
   }
 
   function normalizeError(payload) {
@@ -74,7 +106,23 @@
     return Array.from({ length: count }).map(() => '<div class="skeleton"></div>').join("");
   }
 
-  async function api(path, options = {}, retry = true) {
+  async function parsePayload(response) {
+    const ctype = response.headers.get("content-type") || "";
+    if (ctype.includes("application/json")) {
+      try {
+        return await response.json();
+      } catch (_error) {
+        return null;
+      }
+    }
+    try {
+      return await response.text();
+    } catch (_error) {
+      return null;
+    }
+  }
+
+  async function request(path, options = {}, retry = true) {
     const headers = Object.assign({}, options.headers || {});
     const isFormData = options.body instanceof FormData;
     if (!isFormData && !(options.body instanceof Blob) && !(options.body instanceof ArrayBuffer)) {
@@ -86,15 +134,31 @@
 
     if (response.status === 401 && retry && state.refresh) {
       const refreshed = await refreshToken();
-      if (refreshed) return api(path, options, false);
+      if (refreshed) return request(path, options, false);
     }
 
-    let payload = null;
-    try {
-      payload = await response.json();
-    } catch (_error) {
-      payload = null;
+    const payload = await parsePayload(response);
+    if (!response.ok) {
+      const error = new Error(normalizeError(payload));
+      error.payload = payload;
+      error.status = response.status;
+      throw error;
     }
+    return payload;
+  }
+
+  async function requestExternal(path, options = {}) {
+    const headers = Object.assign({}, options.headers || {});
+    if (!state.externalApiKey) throw new Error("Set API key mode first.");
+
+    const isFormData = options.body instanceof FormData;
+    if (!isFormData && !(options.body instanceof Blob) && !(options.body instanceof ArrayBuffer)) {
+      headers["Content-Type"] = headers["Content-Type"] || "application/json";
+    }
+    headers["X-API-Key"] = state.externalApiKey;
+
+    const response = await fetch(path, Object.assign({}, options, { headers }));
+    const payload = await parsePayload(response);
 
     if (!response.ok) {
       const error = new Error(normalizeError(payload));
@@ -102,7 +166,6 @@
       error.status = response.status;
       throw error;
     }
-
     return payload;
   }
 
@@ -144,14 +207,26 @@
     renderSession();
   }
 
+  function setExternalApiKey(value) {
+    state.externalApiKey = value || "";
+    if (state.externalApiKey) localStorage.setItem("demo_external_api_key", state.externalApiKey);
+    else localStorage.removeItem("demo_external_api_key");
+    renderSession();
+  }
+
   function renderSession() {
-    const label = state.user?.username ? `Signed in: ${state.user.username}` : state.access ? "Authenticated" : "Guest session";
-    $("#sessionChip").textContent = label;
+    const authLabel = state.user?.username ? `Signed in: ${state.user.username}` : state.access ? "Authenticated" : "Guest session";
+    const role = state.user?.is_staff ? "Staff" : state.user ? "User" : "Unauthenticated";
+    $("#sessionChip").textContent = authLabel;
     $("#tokenChip").textContent = state.access ? `Token: Active (${state.lastRefresh})` : "Token: Missing";
+    $("#roleChip").textContent = `Role: ${role}`;
+    $("#apiKeyModeChip").textContent = state.externalApiKey ? "API Key Mode: On" : "API Key Mode: Off";
+
     $("#readinessList").innerHTML = `
-      <li>${state.access ? "Authenticated and ready" : "Sign in before protected workflows"}</li>
-      <li>OCR route available at <code>/api/uploads/ocr-search/</code></li>
-      <li>Medicine history route available at <code>/api/medicine-history/</code></li>
+      <li>${state.access ? "JWT session active" : "Sign in before protected workflows"}</li>
+      <li>${state.externalApiKey ? "External API key mode active" : "Set external API key to test /api/external routes"}</li>
+      <li>OCR route: <code>/api/uploads/ocr-search/</code></li>
+      <li>Integration route set: <code>/api/integrations/*</code></li>
     `;
   }
 
@@ -168,9 +243,7 @@
     $$(".rail-btn").forEach((btn) => btn.classList.toggle("active", btn.dataset.tab === tabName));
     $$(".tab").forEach((tab) => tab.classList.toggle("active", tab.id === `tab-${tabName}`));
 
-    if (location.hash !== `#${tabName}`) {
-      history.replaceState(null, "", `#${tabName}`);
-    }
+    if (location.hash !== `#${tabName}`) history.replaceState(null, "", `#${tabName}`);
   }
 
   function initializeFromHash() {
@@ -296,8 +369,31 @@
     `).join("");
   }
 
+  function renderInbox(items) {
+    if (!items.length) {
+      $("#inboxList").innerHTML = '<div class="empty">No incoming access requests.</div>';
+      return;
+    }
+
+    $("#inboxList").innerHTML = items.map((rawRow) => {
+      const row = mapInboxRow(rawRow);
+      return `
+      <article class="card">
+        <div class="metric">
+          <strong>Request #${row.id}</strong>
+          <span class="badge ${row.status === "approved" ? "active" : row.status === "pending" ? "medium" : "inactive"}">${row.status}</span>
+        </div>
+        <div><strong>App:</strong> ${row.app_name || row.app}</div>
+        <div><strong>Requester:</strong> ${row.requester_display}</div>
+        <div><strong>Purpose:</strong> ${row.purpose || "-"}</div>
+        <div><strong>Decision note:</strong> ${row.decision_note || "-"}</div>
+      </article>
+    `;
+    }).join("");
+  }
+
   async function loadMe() {
-    const data = await api("/api/auth/me/");
+    const data = await request("/api/auth/me/");
     state.user = data;
     $("#meOutput").textContent = pretty(data);
     renderSession();
@@ -308,7 +404,7 @@
     $("#medicineList").innerHTML = placeholderSkeleton(4);
     const query = search ? `?search=${encodeURIComponent(search)}` : "";
     try {
-      const data = await api(`/api/medicines/${query}`);
+      const data = await request(`/api/medicines/${query}`);
       renderMedicineList(asList(data));
     } finally {
       setLoading("#medicineList", false);
@@ -329,36 +425,44 @@
     $("#historyList").innerHTML = placeholderSkeleton(4);
     try {
       const query = buildHistoryQuery(filters);
-      const data = await api(`/api/medicine-history/${query}`);
+      const data = await request(`/api/medicine-history/${query}`);
       renderHistoryList(asList(data));
     } finally {
       setLoading("#historyList", false);
     }
   }
 
+  async function loadApps() {
+    const data = await request("/api/integrations/apps/");
+    $("#appsOutput").textContent = pretty(data);
+  }
+
+  async function loadKeys() {
+    const data = await request("/api/integrations/keys/");
+    $("#keysOutput").textContent = pretty(data);
+  }
+
+  async function loadInbox() {
+    $("#inboxList").innerHTML = placeholderSkeleton(3);
+    const data = await request("/api/integrations/access-requests/inbox/");
+    renderInbox(Array.isArray(data) ? data : asList(data));
+  }
+
   function bindNavigation() {
-    $$(".rail-btn").forEach((btn) => {
-      btn.addEventListener("click", () => activateTab(btn.dataset.tab));
-    });
-
-    $$('[data-jump]').forEach((btn) => {
-      btn.addEventListener("click", () => activateTab(btn.dataset.jump));
-    });
-
+    $$(".rail-btn").forEach((btn) => btn.addEventListener("click", () => activateTab(btn.dataset.tab)));
+    $$('[data-jump]').forEach((btn) => btn.addEventListener("click", () => activateTab(btn.dataset.jump)));
     window.addEventListener("hashchange", initializeFromHash);
   }
 
   function bindAuth() {
-    $$(".seg-btn").forEach((btn) => {
-      btn.addEventListener("click", () => renderAuthMode(btn.dataset.authMode));
-    });
+    $$(".seg-btn").forEach((btn) => btn.addEventListener("click", () => renderAuthMode(btn.dataset.authMode)));
 
     $("#loginForm").addEventListener("submit", async (event) => {
       event.preventDefault();
       setLoading(event.currentTarget, true);
       try {
         const payload = cleanObject(parseForm(event.currentTarget));
-        const data = await api("/api/auth/token/", { method: "POST", body: JSON.stringify(payload) });
+        const data = await request("/api/auth/token/", { method: "POST", body: JSON.stringify(payload) });
         setAuth(data.access, data.refresh);
         await loadMe();
         showToast("Logged in successfully.", "success");
@@ -375,7 +479,7 @@
       setLoading(event.currentTarget, true);
       try {
         const payload = cleanObject(parseForm(event.currentTarget));
-        const data = await api("/api/auth/register/", { method: "POST", body: JSON.stringify(payload) });
+        const data = await request("/api/auth/register/", { method: "POST", body: JSON.stringify(payload) });
         setAuth(data.access, data.refresh);
         state.user = data.user;
         $("#meOutput").textContent = pretty(data.user);
@@ -392,7 +496,7 @@
     $("#logoutBtn").addEventListener("click", async () => {
       try {
         if (state.access && state.refresh) {
-          await api("/api/auth/logout/", { method: "POST", body: JSON.stringify({ refresh: state.refresh }) });
+          await request("/api/auth/logout/", { method: "POST", body: JSON.stringify({ refresh: state.refresh }) });
         }
       } catch (_error) {
       } finally {
@@ -411,6 +515,52 @@
     });
   }
 
+  function bindSecurity() {
+    $("#changePasswordForm").addEventListener("submit", async (event) => {
+      event.preventDefault();
+      setLoading(event.currentTarget, true);
+      try {
+        const payload = cleanObject(parseForm(event.currentTarget));
+        await request("/api/auth/me/change-password/", { method: "POST", body: JSON.stringify(payload) });
+        event.currentTarget.reset();
+        showToast("Password changed.", "success");
+      } catch (error) {
+        showToast(error.message, "error");
+      } finally {
+        setLoading(event.currentTarget, false);
+      }
+    });
+
+    $("#passwordResetRequestForm").addEventListener("submit", async (event) => {
+      event.preventDefault();
+      setLoading(event.currentTarget, true);
+      try {
+        const payload = cleanObject(parseForm(event.currentTarget));
+        await request("/api/auth/password-reset/", { method: "POST", body: JSON.stringify(payload) });
+        showToast("Password reset request sent.", "success");
+      } catch (error) {
+        showToast(error.message, "error");
+      } finally {
+        setLoading(event.currentTarget, false);
+      }
+    });
+
+    $("#passwordResetConfirmForm").addEventListener("submit", async (event) => {
+      event.preventDefault();
+      setLoading(event.currentTarget, true);
+      try {
+        const payload = cleanObject(parseForm(event.currentTarget));
+        await request("/api/auth/password-reset/confirm/", { method: "POST", body: JSON.stringify(payload) });
+        event.currentTarget.reset();
+        showToast("Password reset confirmed.", "success");
+      } catch (error) {
+        showToast(error.message, "error");
+      } finally {
+        setLoading(event.currentTarget, false);
+      }
+    });
+  }
+
   function bindOCR() {
     const fileInput = $("#ocrImageInput");
     const ocrForm = $("#ocrForm");
@@ -418,10 +568,6 @@
     const snapshot = $("#cameraSnapshot");
     const canvas = $("#cameraCanvas");
     const cameraStatus = $("#cameraStatus");
-    const startCameraBtn = $("#startCameraBtn");
-    const stopCameraBtn = $("#stopCameraBtn");
-    const captureCameraBtn = $("#captureCameraBtn");
-    const clearCameraBtn = $("#clearCameraBtn");
 
     function setCameraStatus(text) {
       cameraStatus.textContent = text;
@@ -435,9 +581,7 @@
       }
       snapshot.src = "";
       snapshot.classList.add("hidden");
-      if (!state.cameraStream) {
-        preview.classList.add("hidden");
-      }
+      if (!state.cameraStream) preview.classList.add("hidden");
     }
 
     function stopCamera() {
@@ -459,17 +603,14 @@
       }
     });
 
-    startCameraBtn.addEventListener("click", async () => {
+    $("#startCameraBtn").addEventListener("click", async () => {
       if (!navigator.mediaDevices?.getUserMedia) {
         showToast("Camera API is not supported in this browser.", "error");
         return;
       }
       try {
         stopCamera();
-        const stream = await navigator.mediaDevices.getUserMedia({
-          video: { facingMode: { ideal: "environment" } },
-          audio: false,
-        });
+        const stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: { ideal: "environment" } }, audio: false });
         state.cameraStream = stream;
         preview.srcObject = stream;
         preview.classList.remove("hidden");
@@ -480,11 +621,9 @@
       }
     });
 
-    stopCameraBtn.addEventListener("click", () => {
-      stopCamera();
-    });
+    $("#stopCameraBtn").addEventListener("click", stopCamera);
 
-    captureCameraBtn.addEventListener("click", async () => {
+    $("#captureCameraBtn").addEventListener("click", async () => {
       if (!state.cameraStream || !preview.videoWidth || !preview.videoHeight) {
         showToast("Start camera before capture.", "error");
         return;
@@ -497,15 +636,12 @@
         return;
       }
       context.drawImage(preview, 0, 0, canvas.width, canvas.height);
-
       const blob = await new Promise((resolve) => canvas.toBlob(resolve, "image/jpeg", 0.92));
       if (!blob) {
         showToast("Failed to capture image.", "error");
         return;
       }
-      if (state.cameraSnapshotUrl) {
-        URL.revokeObjectURL(state.cameraSnapshotUrl);
-      }
+      if (state.cameraSnapshotUrl) URL.revokeObjectURL(state.cameraSnapshotUrl);
       state.cameraCaptureBlob = blob;
       state.cameraSnapshotUrl = URL.createObjectURL(blob);
       snapshot.src = state.cameraSnapshotUrl;
@@ -515,7 +651,7 @@
       fileInput.value = "";
     });
 
-    clearCameraBtn.addEventListener("click", () => {
+    $("#clearCameraBtn").addEventListener("click", () => {
       clearCameraCapture();
       $("#ocrFileMeta").textContent = "PNG/JPG up to backend limit";
       setCameraStatus(state.cameraStream ? "Camera is live" : "Camera is off");
@@ -529,11 +665,9 @@
       if (topK !== null && topK !== "") formData.set("top_k", String(topK));
 
       const selectedFile = fileInput.files?.[0] || null;
-      if (selectedFile) {
-        formData.set("image", selectedFile, selectedFile.name);
-      } else if (state.cameraCaptureBlob) {
-        formData.set("image", state.cameraCaptureBlob, `camera-capture-${Date.now()}.jpg`);
-      } else {
+      if (selectedFile) formData.set("image", selectedFile, selectedFile.name);
+      else if (state.cameraCaptureBlob) formData.set("image", state.cameraCaptureBlob, `camera-capture-${Date.now()}.jpg`);
+      else {
         showToast("Select an image or capture one from camera.", "error");
         return;
       }
@@ -541,7 +675,7 @@
       setLoading(form, true);
       $("#ocrMatches").innerHTML = placeholderSkeleton(3);
       try {
-        const result = await api("/api/uploads/ocr-search/", { method: "POST", body: formData });
+        const result = await request("/api/uploads/ocr-search/", { method: "POST", body: formData });
         $("#ocrOutput").textContent = pretty(result);
         renderOCRSummary(result);
         showToast(`OCR complete (${result.match_confidence_tier}).`, "success");
@@ -559,12 +693,11 @@
     $("#ocrMatches").addEventListener("click", async (event) => {
       const detailId = event.target.getAttribute("data-ocr-detail");
       if (!detailId) return;
-
       setLoading("#medicineDetailPanel", true);
       try {
         const [medicine, interactions] = await Promise.all([
-          api(`/api/medicines/${detailId}/`),
-          api(`/api/medicines/${detailId}/interactions/`),
+          request(`/api/medicines/${detailId}/`),
+          request(`/api/medicines/${detailId}/interactions/`),
         ]);
         renderMedicineDetail(medicine, interactions);
         activateTab("medicines");
@@ -589,8 +722,7 @@
     });
 
     $("#clearMedicineSearch").addEventListener("click", async () => {
-      const input = $("#medicineSearchForm input[name=search]");
-      input.value = "";
+      $("#medicineSearchForm input[name=search]").value = "";
       try {
         await loadMedicines("");
       } catch (error) {
@@ -607,8 +739,8 @@
       try {
         const targetId = detailId || interactionId;
         const [medicine, interactions] = await Promise.all([
-          api(`/api/medicines/${targetId}/`),
-          api(`/api/medicines/${targetId}/interactions/`),
+          request(`/api/medicines/${targetId}/`),
+          request(`/api/medicines/${targetId}/interactions/`),
         ]);
         renderMedicineDetail(medicine, interactions);
       } catch (error) {
@@ -622,21 +754,20 @@
   function bindHistory() {
     $("#historyForm").addEventListener("submit", async (event) => {
       event.preventDefault();
-      const form = event.currentTarget;
-      const raw = parseForm(form);
+      const raw = parseForm(event.currentTarget);
       const payload = cleanObject(raw);
       if (payload.medicine_id) payload.medicine_id = Number(payload.medicine_id);
 
-      setLoading(form, true);
+      setLoading(event.currentTarget, true);
       try {
-        await api("/api/medicine-history/", { method: "POST", body: JSON.stringify(payload) });
-        form.reset();
+        await request("/api/medicine-history/", { method: "POST", body: JSON.stringify(payload) });
+        event.currentTarget.reset();
         await loadHistory(cleanObject(parseForm($("#historyFilterForm"))));
         showToast("Medicine history entry created.", "success");
       } catch (error) {
         showToast(error.message, "error");
       } finally {
-        setLoading(form, false);
+        setLoading(event.currentTarget, false);
       }
     });
 
@@ -650,8 +781,7 @@
     });
 
     $("#clearHistoryFilters").addEventListener("click", async () => {
-      const form = $("#historyFilterForm");
-      form.reset();
+      $("#historyFilterForm").reset();
       try {
         await loadHistory({});
       } catch (error) {
@@ -666,7 +796,7 @@
       try {
         if (idToMarkPast) {
           const today = new Date().toISOString().slice(0, 10);
-          await api(`/api/medicine-history/${idToMarkPast}/`, {
+          await request(`/api/medicine-history/${idToMarkPast}/`, {
             method: "PATCH",
             body: JSON.stringify({ status: "past", end_date: today }),
           });
@@ -686,6 +816,210 @@
     });
   }
 
+  function bindIntegrations() {
+    $("#appCreateForm").addEventListener("submit", async (event) => {
+      event.preventDefault();
+      setLoading(event.currentTarget, true);
+      try {
+        const payload = cleanObject(parseForm(event.currentTarget));
+        await request("/api/integrations/apps/", { method: "POST", body: JSON.stringify(payload) });
+        event.currentTarget.reset();
+        await loadApps();
+        showToast("Developer app created.", "success");
+      } catch (error) {
+        showToast(error.message, "error");
+      } finally {
+        setLoading(event.currentTarget, false);
+      }
+    });
+
+    $("#appEditForm").addEventListener("submit", async (event) => {
+      event.preventDefault();
+      setLoading(event.currentTarget, true);
+      try {
+        const raw = parseForm(event.currentTarget);
+        const appId = raw.id;
+        if (!appId) throw new Error("App ID is required.");
+        const payload = mapAppPatchPayload(raw);
+        await request(`/api/integrations/apps/${appId}/`, { method: "PATCH", body: JSON.stringify(payload) });
+        await loadApps();
+        showToast("Developer app updated.", "success");
+      } catch (error) {
+        showToast(error.message, "error");
+      } finally {
+        setLoading(event.currentTarget, false);
+      }
+    });
+
+    $("#deleteAppBtn").addEventListener("click", async () => {
+      const appId = $("#appEditForm input[name=id]").value;
+      if (!appId) {
+        showToast("App ID is required.", "error");
+        return;
+      }
+      try {
+        await request(`/api/integrations/apps/${appId}/`, { method: "DELETE" });
+        await loadApps();
+        showToast("Developer app deleted.", "success");
+      } catch (error) {
+        showToast(error.message, "error");
+      }
+    });
+
+    $("#refreshAppsBtn").addEventListener("click", async () => {
+      try {
+        await loadApps();
+        showToast("Apps refreshed.", "success");
+      } catch (error) {
+        showToast(error.message, "error");
+      }
+    });
+
+    $("#keyCreateForm").addEventListener("submit", async (event) => {
+      event.preventDefault();
+      setLoading(event.currentTarget, true);
+      try {
+        const payload = mapApiKeyCreatePayload(parseForm(event.currentTarget));
+        const created = await request("/api/integrations/keys/", { method: "POST", body: JSON.stringify(payload) });
+        $("#keyWarning").classList.remove("hidden");
+        $("#keyWarning").textContent = "Raw API key is shown once below. Save it now; backend stores only hash/prefix.";
+        $("#keysOutput").textContent = pretty(created);
+        if (created?.api_key) {
+          $("#apiKeyModeForm input[name=api_key]").value = created.api_key;
+          setExternalApiKey(created.api_key);
+        }
+        await loadKeys();
+        showToast("API key created.", "success");
+      } catch (error) {
+        showToast(error.message, "error");
+      } finally {
+        setLoading(event.currentTarget, false);
+      }
+    });
+
+    $("#keyRevokeForm").addEventListener("submit", async (event) => {
+      event.preventDefault();
+      setLoading(event.currentTarget, true);
+      try {
+        const keyId = Number(new FormData(event.currentTarget).get("key_id"));
+        await request(`/api/integrations/keys/${keyId}/revoke/`, { method: "POST" });
+        await loadKeys();
+        showToast("API key revoked.", "success");
+      } catch (error) {
+        showToast(error.message, "error");
+      } finally {
+        setLoading(event.currentTarget, false);
+      }
+    });
+
+    $("#refreshKeysBtn").addEventListener("click", async () => {
+      try {
+        await loadKeys();
+        showToast("Keys refreshed.", "success");
+      } catch (error) {
+        showToast(error.message, "error");
+      }
+    });
+
+    $("#refreshInboxBtn").addEventListener("click", async () => {
+      try {
+        await loadInbox();
+        showToast("Inbox refreshed.", "success");
+      } catch (error) {
+        showToast(error.message, "error");
+      }
+    });
+
+    $("#inboxDecisionForm").addEventListener("submit", async (event) => {
+      event.preventDefault();
+      setLoading(event.currentTarget, true);
+      try {
+        const raw = cleanObject(parseForm(event.currentTarget));
+        const requestId = Number(raw.request_id);
+        const decision = raw.decision;
+        const payload = raw.decision_note ? { decision_note: raw.decision_note } : {};
+        const result = await request(`/api/integrations/access-requests/${requestId}/${decision}/`, {
+          method: "POST",
+          body: JSON.stringify(payload),
+        });
+        await loadInbox();
+        showToast(`Request #${result.id} ${result.status}.`, "success");
+      } catch (error) {
+        showToast(error.message, "error");
+      } finally {
+        setLoading(event.currentTarget, false);
+      }
+    });
+  }
+
+  function bindExternal() {
+    $("#apiKeyModeForm").addEventListener("submit", (event) => {
+      event.preventDefault();
+      const raw = new FormData(event.currentTarget).get("api_key") || "";
+      const value = String(raw).trim();
+      setExternalApiKey(value);
+      showToast(value ? "API key mode enabled." : "API key mode cleared.", "success");
+    });
+
+    $("#clearApiKeyModeBtn").addEventListener("click", () => {
+      $("#apiKeyModeForm").reset();
+      setExternalApiKey("");
+      showToast("API key mode cleared.", "success");
+    });
+
+    $("#externalRequestForm").addEventListener("submit", async (event) => {
+      event.preventDefault();
+      setLoading(event.currentTarget, true);
+      try {
+        const payload = cleanObject(parseForm(event.currentTarget));
+        const result = await requestExternal("/api/external/access-requests/", {
+          method: "POST",
+          body: JSON.stringify(payload),
+        });
+        $("#externalOutput").textContent = pretty(result);
+        showToast("External access request created.", "success");
+      } catch (error) {
+        $("#externalOutput").textContent = error.payload ? pretty(error.payload) : error.message;
+        showToast(error.message, "error");
+      } finally {
+        setLoading(event.currentTarget, false);
+      }
+    });
+
+    $("#externalFetchForm").addEventListener("submit", async (event) => {
+      event.preventDefault();
+      setLoading(event.currentTarget, true);
+      try {
+        const payload = cleanObject(parseForm(event.currentTarget));
+        const query = payload.format === "xml" ? "?format=xml" : "";
+        const result = await requestExternal(`/api/external/medicine-history/${encodeURIComponent(payload.username)}/${query}`);
+        $("#externalOutput").textContent = pretty(result);
+        showToast(`External history fetched (${payload.format}).`, "success");
+      } catch (error) {
+        $("#externalOutput").textContent = error.payload ? pretty(error.payload) : error.message;
+        showToast(error.message, "error");
+      } finally {
+        setLoading(event.currentTarget, false);
+      }
+    });
+  }
+
+  function bindExports() {
+    $("#runExportBtn").addEventListener("click", async () => {
+      setLoading("#runExportBtn", true);
+      try {
+        const result = await request("/api/integrations/medicine-history/export.xml");
+        $("#exportOutput").textContent = pretty(result);
+        showToast("XML export fetched.", "success");
+      } catch (error) {
+        $("#exportOutput").textContent = error.payload ? pretty(error.payload) : error.message;
+        showToast(error.message, "error");
+      } finally {
+        setLoading("#runExportBtn", false);
+      }
+    });
+  }
+
   function bindDeleteModal() {
     $("#cancelDeleteBtn").addEventListener("click", () => {
       state.pendingDeleteHistoryId = null;
@@ -695,7 +1029,7 @@
     $("#confirmDeleteBtn").addEventListener("click", async () => {
       if (!state.pendingDeleteHistoryId) return;
       try {
-        await api(`/api/medicine-history/${state.pendingDeleteHistoryId}/`, { method: "DELETE" });
+        await request(`/api/medicine-history/${state.pendingDeleteHistoryId}/`, { method: "DELETE" });
         state.pendingDeleteHistoryId = null;
         $("#confirmModal").close();
         await loadHistory(cleanObject(parseForm($("#historyFilterForm"))));
@@ -710,7 +1044,7 @@
     if (!state.access) return;
     try {
       await loadMe();
-      await Promise.all([loadMedicines(""), loadHistory({})]);
+      await Promise.all([loadMedicines(""), loadHistory({}), loadApps(), loadKeys(), loadInbox()]);
     } catch (error) {
       showToast(error.message, "error");
     }
@@ -718,24 +1052,24 @@
 
   function bootstrap() {
     renderSession();
-
-    $$(".rail-btn").forEach((btn) => {
-      btn.addEventListener("click", () => activateTab(btn.dataset.tab));
-    });
-    $$('[data-jump]').forEach((btn) => {
-      btn.addEventListener("click", () => activateTab(btn.dataset.jump));
-    });
-
-    window.addEventListener("hashchange", initializeFromHash);
-
+    bindNavigation();
     bindAuth();
+    bindSecurity();
     bindOCR();
     bindMedicines();
     bindHistory();
+    bindIntegrations();
+    bindExternal();
+    bindExports();
     bindDeleteModal();
 
     renderAuthMode("login");
     initializeFromHash();
+
+    if (state.externalApiKey) {
+      $("#apiKeyModeForm input[name=api_key]").value = state.externalApiKey;
+    }
+
     preloadAuthedData();
   }
 

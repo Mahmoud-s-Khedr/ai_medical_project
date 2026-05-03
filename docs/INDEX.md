@@ -30,13 +30,14 @@ Rules:
 
 1. [System Architecture](./system-architecture.md)
 2. [API Contracts](./api-contracts.md)
-3. [Data Model](./data-model.md)
-4. [OCR and Search Internals](./ocr-search-internals.md)
-5. [Configuration, Security, and Operations](./config-security-ops.md)
-6. [Verification Evidence](./verification-evidence.md)
-7. [Contributor Safe Change Guide](./safe-change-guide.md)
-8. [Coverage Audit and Gap Register](./coverage-audit-and-gaps.md)
-9. [API Docs Gap Audit (2026-05-03)](./api-docs-gap-audit-2026-05-03.md)
+3. [API DTO Reference](./api-dto-reference.md)
+4. [Data Model](./data-model.md)
+5. [OCR and Search Internals](./ocr-search-internals.md)
+6. [Configuration, Security, and Operations](./config-security-ops.md)
+7. [Verification Evidence](./verification-evidence.md)
+8. [Contributor Safe Change Guide](./safe-change-guide.md)
+9. [Coverage Audit and Gap Register](./coverage-audit-and-gaps.md)
+10. [API Docs Gap Audit (2026-05-03)](./api-docs-gap-audit-2026-05-03.md)
 
 ## Documentation Quality Gates
 

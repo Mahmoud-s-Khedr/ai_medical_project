@@ -64,7 +64,7 @@ h1 { margin: 4px 0 0; font-size: clamp(22px, 2vw, 30px); }
 }
 .chip-soft { color: var(--secondary); }
 
-.workspace { display: grid; grid-template-columns: 210px minmax(0, 1fr); gap: 12px; }
+.workspace { display: grid; grid-template-columns: 230px minmax(0, 1fr); gap: 12px; }
 .module-rail {
   display: grid;
   gap: 8px;
@@ -75,6 +75,8 @@ h1 { margin: 4px 0 0; font-size: clamp(22px, 2vw, 30px); }
   backdrop-filter: var(--blur);
   box-shadow: var(--shadow);
   padding: 10px;
+  max-height: calc(100vh - 110px);
+  overflow: auto;
 }
 
 .rail-btn {
@@ -274,6 +276,7 @@ details summary { cursor: pointer; color: var(--secondary); font-weight: 600; ma
 
 .clean-list { margin: 0; padding-left: 18px; color: #2f4763; }
 .clean-list li { margin: 6px 0; }
+.capability-note p { margin: 0; color: #2f4763; }
 
 .dropzone {
   border: 2px dashed #9db5d7;
@@ -320,6 +323,13 @@ details summary { cursor: pointer; color: var(--secondary); font-weight: 600; ma
 
 .loading { opacity: 0.64; pointer-events: none; }
 
+#inboxList .card,
+#medicineList .card,
+#historyList .card,
+#ocrMatches .card { padding: 12px; }
+
+#keyWarning { margin-bottom: 8px; }
+
 @media (max-width: 1120px) {
   .cards-4 { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .context-head { flex-direction: column; align-items: start; }
@@ -327,6 +337,7 @@ details summary { cursor: pointer; color: var(--secondary); font-weight: 600; ma
 
 @media (max-width: 880px) {
   .workspace { grid-template-columns: 1fr; }
+  .module-rail { max-height: none; overflow: visible; }
   .module-rail { grid-template-columns: repeat(3, minmax(0, 1fr)); }
   .split-2, .inline-form { grid-template-columns: 1fr; }
 }

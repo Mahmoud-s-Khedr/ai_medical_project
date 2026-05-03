@@ -17,6 +17,9 @@
     lastRefresh: "Never",
     historyRows: [],
     pendingDeleteHistoryId: null,
+    cameraStream: null,
+    cameraCaptureBlob: null,
+    cameraSnapshotUrl: "",
   };
 
   function showToast(message, type = "success") {
@@ -410,20 +413,131 @@
 
   function bindOCR() {
     const fileInput = $("#ocrImageInput");
+    const ocrForm = $("#ocrForm");
+    const preview = $("#cameraPreview");
+    const snapshot = $("#cameraSnapshot");
+    const canvas = $("#cameraCanvas");
+    const cameraStatus = $("#cameraStatus");
+    const startCameraBtn = $("#startCameraBtn");
+    const stopCameraBtn = $("#stopCameraBtn");
+    const captureCameraBtn = $("#captureCameraBtn");
+    const clearCameraBtn = $("#clearCameraBtn");
+
+    function setCameraStatus(text) {
+      cameraStatus.textContent = text;
+    }
+
+    function clearCameraCapture() {
+      state.cameraCaptureBlob = null;
+      if (state.cameraSnapshotUrl) {
+        URL.revokeObjectURL(state.cameraSnapshotUrl);
+        state.cameraSnapshotUrl = "";
+      }
+      snapshot.src = "";
+      snapshot.classList.add("hidden");
+      if (!state.cameraStream) {
+        preview.classList.add("hidden");
+      }
+    }
+
+    function stopCamera() {
+      if (!state.cameraStream) return;
+      state.cameraStream.getTracks().forEach((track) => track.stop());
+      state.cameraStream = null;
+      preview.srcObject = null;
+      preview.classList.add("hidden");
+      setCameraStatus("Camera is off");
+    }
 
     fileInput.addEventListener("change", () => {
       const file = fileInput.files?.[0];
       if (file) {
         $("#ocrFileMeta").textContent = `${file.name} • ${(file.size / 1024).toFixed(1)} KB`;
+        clearCameraCapture();
       } else {
         $("#ocrFileMeta").textContent = "PNG/JPG up to backend limit";
       }
     });
 
-    $("#ocrForm").addEventListener("submit", async (event) => {
+    startCameraBtn.addEventListener("click", async () => {
+      if (!navigator.mediaDevices?.getUserMedia) {
+        showToast("Camera API is not supported in this browser.", "error");
+        return;
+      }
+      try {
+        stopCamera();
+        const stream = await navigator.mediaDevices.getUserMedia({
+          video: { facingMode: { ideal: "environment" } },
+          audio: false,
+        });
+        state.cameraStream = stream;
+        preview.srcObject = stream;
+        preview.classList.remove("hidden");
+        setCameraStatus("Camera is live");
+      } catch (error) {
+        setCameraStatus("Camera access denied");
+        showToast(error.message || "Could not access camera.", "error");
+      }
+    });
+
+    stopCameraBtn.addEventListener("click", () => {
+      stopCamera();
+    });
+
+    captureCameraBtn.addEventListener("click", async () => {
+      if (!state.cameraStream || !preview.videoWidth || !preview.videoHeight) {
+        showToast("Start camera before capture.", "error");
+        return;
+      }
+      canvas.width = preview.videoWidth;
+      canvas.height = preview.videoHeight;
+      const context = canvas.getContext("2d");
+      if (!context) {
+        showToast("Canvas is not available for capture.", "error");
+        return;
+      }
+      context.drawImage(preview, 0, 0, canvas.width, canvas.height);
+
+      const blob = await new Promise((resolve) => canvas.toBlob(resolve, "image/jpeg", 0.92));
+      if (!blob) {
+        showToast("Failed to capture image.", "error");
+        return;
+      }
+      if (state.cameraSnapshotUrl) {
+        URL.revokeObjectURL(state.cameraSnapshotUrl);
+      }
+      state.cameraCaptureBlob = blob;
+      state.cameraSnapshotUrl = URL.createObjectURL(blob);
+      snapshot.src = state.cameraSnapshotUrl;
+      snapshot.classList.remove("hidden");
+      setCameraStatus(`Captured ${(blob.size / 1024).toFixed(1)} KB`);
+      $("#ocrFileMeta").textContent = "Using captured camera image";
+      fileInput.value = "";
+    });
+
+    clearCameraBtn.addEventListener("click", () => {
+      clearCameraCapture();
+      $("#ocrFileMeta").textContent = "PNG/JPG up to backend limit";
+      setCameraStatus(state.cameraStream ? "Camera is live" : "Camera is off");
+    });
+
+    ocrForm.addEventListener("submit", async (event) => {
       event.preventDefault();
       const form = event.currentTarget;
-      const formData = new FormData(form);
+      const formData = new FormData();
+      const topK = new FormData(form).get("top_k");
+      if (topK !== null && topK !== "") formData.set("top_k", String(topK));
+
+      const selectedFile = fileInput.files?.[0] || null;
+      if (selectedFile) {
+        formData.set("image", selectedFile, selectedFile.name);
+      } else if (state.cameraCaptureBlob) {
+        formData.set("image", state.cameraCaptureBlob, `camera-capture-${Date.now()}.jpg`);
+      } else {
+        showToast("Select an image or capture one from camera.", "error");
+        return;
+      }
+
       setLoading(form, true);
       $("#ocrMatches").innerHTML = placeholderSkeleton(3);
       try {
@@ -439,6 +553,8 @@
         setLoading(form, false);
       }
     });
+
+    window.addEventListener("beforeunload", stopCamera);
 
     $("#ocrMatches").addEventListener("click", async (event) => {
       const detailId = event.target.getAttribute("data-ocr-detail");

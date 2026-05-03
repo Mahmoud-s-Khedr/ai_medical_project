@@ -114,8 +114,23 @@
               <label class="dropzone" for="ocrImageInput">
                 <span class="drop-title">Drop image or click to browse</span>
                 <span class="drop-meta" id="ocrFileMeta">PNG/JPG up to backend limit</span>
-                <input id="ocrImageInput" type="file" name="image" accept="image/*" required />
+                <input id="ocrImageInput" type="file" name="image" accept="image/*" />
               </label>
+              <section class="camera-panel" aria-label="Camera capture">
+                <div class="camera-head">
+                  <strong>Camera</strong>
+                  <span class="drop-meta" id="cameraStatus">Camera is off</span>
+                </div>
+                <video id="cameraPreview" class="camera-preview hidden" autoplay playsinline muted></video>
+                <img id="cameraSnapshot" class="camera-preview hidden" alt="Captured camera snapshot" />
+                <canvas id="cameraCanvas" class="hidden" aria-hidden="true"></canvas>
+                <div class="action-row">
+                  <button class="btn secondary" id="startCameraBtn" type="button">Start Camera</button>
+                  <button class="btn ghost" id="captureCameraBtn" type="button">Capture</button>
+                  <button class="btn ghost" id="stopCameraBtn" type="button">Stop Camera</button>
+                  <button class="btn ghost" id="clearCameraBtn" type="button">Clear Capture</button>
+                </div>
+              </section>
               <label>Top K candidates <input type="number" name="top_k" value="5" min="1" max="20" /></label>
               <button class="btn" type="submit">Run OCR Search</button>
             </form>
@@ -218,6 +233,6 @@
     </article>
   </dialog>
 
-  <script src="{% static 'demo/app.js' %}?v=2026-05-03-medicine-history-ui"></script>
+  <script src="{% static 'demo/app.js' %}?v=2026-05-03-camera-ocr-ui"></script>
 </body>
 </html>

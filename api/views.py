@@ -23,9 +23,9 @@ from rest_framework.views import APIView
 
 from ai.ocr_pipeline import try_rotations_and_ocr
 
-from .models import MedicationReminder, Medicine
+from .models import Medicine, MedicineHistoryEntry
 from .search import search_medicines_ranked
-from .serializers import MedicationReminderSerializer, MedicineSerializer, ReminderEventSerializer
+from .serializers import MedicineHistoryEntrySerializer, MedicineSerializer
 
 logger = logging.getLogger(__name__)
 
@@ -311,35 +311,36 @@ class MedicineViewSet(viewsets.ModelViewSet):
         })
 
 
-class MedicationReminderViewSet(viewsets.ModelViewSet):
-    serializer_class = MedicationReminderSerializer
+class MedicineHistoryViewSet(viewsets.ModelViewSet):
+    serializer_class = MedicineHistoryEntrySerializer
     permission_classes = [IsAuthenticated]
 
     def get_queryset(self):
         queryset = (
-            MedicationReminder.objects.select_related("medicine")
+            MedicineHistoryEntry.objects.select_related("medicine")
             .filter(user=self.request.user)
         )
-        is_active = self.request.query_params.get("is_active")
-        if is_active in {"true", "false"}:
-            queryset = queryset.filter(is_active=is_active == "true")
+        status_filter = self.request.query_params.get("status")
+        if status_filter in {"current", "past"}:
+            queryset = queryset.filter(status=status_filter)
+
+        start_date_from = self.request.query_params.get("start_date_from")
+        if start_date_from:
+            queryset = queryset.filter(start_date__gte=start_date_from)
+        start_date_to = self.request.query_params.get("start_date_to")
+        if start_date_to:
+            queryset = queryset.filter(start_date__lte=start_date_to)
+
+        end_date_from = self.request.query_params.get("end_date_from")
+        if end_date_from:
+            queryset = queryset.filter(end_date__gte=end_date_from)
+        end_date_to = self.request.query_params.get("end_date_to")
+        if end_date_to:
+            queryset = queryset.filter(end_date__lte=end_date_to)
         return queryset
 
     def perform_create(self, serializer):
         serializer.save(user=self.request.user)
-
-    @action(detail=True, methods=["get", "post"], url_path="events")
-    def events(self, request, pk=None):
-        reminder = self.get_object()
-
-        if request.method == "GET":
-            serializer = ReminderEventSerializer(reminder.events.all(), many=True)
-            return Response(serializer.data)
-
-        serializer = ReminderEventSerializer(data=request.data)
-        serializer.is_valid(raise_exception=True)
-        serializer.save(reminder=reminder)
-        return Response(serializer.data, status=status.HTTP_201_CREATED)
 
 
 class OCRMedicineSearchView(APIView):

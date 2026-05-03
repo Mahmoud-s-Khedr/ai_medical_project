@@ -12,25 +12,11 @@ from .auth_views import (
     PasswordResetRequestView,
     RegisterView,
 )
-from .medical_views import (
-    AllergyViewSet,
-    DiagnosisViewSet,
-    DoctorVisitViewSet,
-    LabResultViewSet,
-    MedicalRecordView,
-    MedicalSummaryView,
-    VitalSignViewSet,
-)
-from .views import MedicationReminderViewSet, MedicineViewSet, OCRMedicineSearchView
+from .views import MedicineHistoryViewSet, MedicineViewSet, OCRMedicineSearchView
 
 router = DefaultRouter()
 router.register("medicines", MedicineViewSet, basename="medicine")
-router.register("reminders", MedicationReminderViewSet, basename="reminder")
-router.register("medical-record/diagnoses", DiagnosisViewSet, basename="diagnosis")
-router.register("medical-record/allergies", AllergyViewSet, basename="allergy")
-router.register("medical-record/vitals", VitalSignViewSet, basename="vital")
-router.register("medical-record/lab-results", LabResultViewSet, basename="lab-result")
-router.register("medical-record/visits", DoctorVisitViewSet, basename="visit")
+router.register("medicine-history", MedicineHistoryViewSet, basename="medicine-history")
 
 auth_urlpatterns = [
     path("register/", RegisterView.as_view(), name="auth-register"),
@@ -46,8 +32,6 @@ auth_urlpatterns = [
 
 urlpatterns = [
     path("auth/", include(auth_urlpatterns)),
-    path("medical-record/", MedicalRecordView.as_view(), name="medical-record"),
-    path("medical-record/summary/", MedicalSummaryView.as_view(), name="medical-record-summary"),
     path("", include(router.urls)),
     path("uploads/ocr-search/", OCRMedicineSearchView.as_view(), name="ocr-medicine-search"),
 ]

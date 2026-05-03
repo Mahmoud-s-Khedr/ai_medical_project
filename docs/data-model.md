@@ -17,54 +17,29 @@ Key fields:
 Used by:
 - catalog listing/search
 - OCR match target
-- reminder optional foreign key
+- medicine-history optional foreign key
 - interaction analysis endpoint
 
-### MedicationReminder
+### MedicineHistoryEntry
 
-Model: `api.models.MedicationReminder`
+Model: `api.models.MedicineHistoryEntry`
 
 Key fields:
 - `user` (required FK, cascade delete)
 - `medicine` (optional FK, set null)
-- `medicine_name`, `dose`, `times` (JSON list), date range, timezone, active flag
+- `medicine_name` (required snapshot text)
+- `status` (`current|past`)
+- `dose`, `start_date`, `end_date`, `notes`
 
 Constraints and behavior:
-- DB-level user non-null (see migrations).
+- `status=current` requires `end_date` to be null.
+- if both dates are set then `end_date >= start_date`.
 - user ownership is enforced in queryset-level scoping.
-
-### ReminderEvent
-
-Model: `api.models.ReminderEvent`
-
-Key fields:
-- `reminder` FK
-- `scheduled_at`
-- `status`: `scheduled|taken|missed|skipped`
-- `taken_at` optional but required by serializer when `status=taken`
-
-### MedicalRecord Family
-
-Root model: `MedicalRecord` (one-to-one with user).
-
-Child collections:
-- `Diagnosis`
-- `Allergy`
-- `VitalSign`
-- `LabResult`
-- `DoctorVisit`
-
-All children are linked to `MedicalRecord` and accessed only through record-scoped viewsets.
 
 ## Ordering Defaults
 
 - `Medicine`: `trade_name` asc
-- `MedicationReminder`: active first, then `start_date`, then name
-- `ReminderEvent`: latest scheduled first
-- `Diagnosis`: latest diagnosis date first
-- `VitalSign`: latest recorded first
-- `LabResult`: latest date first
-- `DoctorVisit`: latest visit first
+- `MedicineHistoryEntry`: latest update first, then medicine name
 
 ## Migration Notes
 
@@ -73,6 +48,8 @@ Observed migrations in `api/migrations/`:
 - `0002_medicationreminder_user.py`
 - `0003_medical_record.py`
 - `0004_reminder_user_non_null.py`
+- `0005_medicine_active_ingredient_norm_and_more.py`
+- `0006_medicine_history_refactor.py`
 
 Notable behavior verified by tests:
-- migration path handles orphan reminders before enforcing non-null reminder user.
+- migration backfills `MedicineHistoryEntry` from `MedicationReminder`, then removes reminder and medical-record tables.

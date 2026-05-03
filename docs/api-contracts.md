@@ -77,34 +77,22 @@ OCR error semantics:
 - `413` upload too large (greater than `OCR_MAX_UPLOAD_BYTES`).
 - `500` OCR pipeline exception.
 
-## Reminders and Events
+## Medicine History
 
-- `GET /api/reminders/` authenticated, user-scoped.
-- `POST /api/reminders/` authenticated, creates reminder for caller.
-- `GET/PATCH/DELETE /api/reminders/{id}/` authenticated, owner-scoped by queryset.
-- `GET /api/reminders/?is_active=true|false` filter.
-- `GET/POST /api/reminders/{id}/events/` authenticated nested resource.
-
-Validation constraints:
-- `times` must be non-empty list of `HH:MM` strings.
-- `end_date` cannot be before `start_date`.
-- Reminder event with `status=taken` requires `taken_at`.
-
-## Medical Record
-
-- `GET/PATCH/PUT /api/medical-record/` authenticated.
-- `GET /api/medical-record/summary/` authenticated.
-- Child resources (`GET/POST` list-create, detail operations by router):
-- `/api/medical-record/diagnoses/`
-- `/api/medical-record/allergies/`
-- `/api/medical-record/vitals/`
-- `/api/medical-record/lab-results/`
-- `/api/medical-record/visits/`
+- `GET /api/medicine-history/` authenticated, user-scoped.
+- `POST /api/medicine-history/` authenticated, creates history entry for caller.
+- `GET/PATCH/DELETE /api/medicine-history/{id}/` authenticated, owner-scoped by queryset.
 
 Filter params:
-- Diagnoses: `?status=active|chronic|resolved`
-- Allergies: `?type=drug|food|environmental|other`
-- Labs: `?abnormal=true`
+- `?status=current|past`
+- `?start_date_from=YYYY-MM-DD`
+- `?start_date_to=YYYY-MM-DD`
+- `?end_date_from=YYYY-MM-DD`
+- `?end_date_to=YYYY-MM-DD`
+
+Validation constraints:
+- `status=current` requires `end_date` to be null.
+- if both dates exist, `end_date` cannot be before `start_date`.
 
 ## Pagination
 

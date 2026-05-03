@@ -7,8 +7,7 @@ Language: [English](README.md) | [العربية](README_AR.md)
 This repository provides a Django REST backend for:
 - medicine catalog and search
 - OCR-based medicine lookup from uploaded images
-- reminders and reminder events
-- patient medical record resources
+- medicine history tracking (current/past usage)
 
 It also includes:
 - a demo web UI at `/demo/`

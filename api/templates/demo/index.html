@@ -29,8 +29,7 @@
         <button class="rail-btn active" data-tab="dashboard">Dashboard</button>
         <button class="rail-btn" data-tab="ocr">OCR</button>
         <button class="rail-btn" data-tab="medicines">Medicines</button>
-        <button class="rail-btn" data-tab="reminders">Reminders</button>
-        <button class="rail-btn" data-tab="medical">Medical Record</button>
+        <button class="rail-btn" data-tab="history">Medicine History</button>
         <button class="rail-btn" data-tab="auth">Auth</button>
       </nav>
 
@@ -43,8 +42,7 @@
           </div>
           <div class="action-bar">
             <button class="btn secondary" data-jump="ocr" type="button">Scan Medicine</button>
-            <button class="btn secondary" data-jump="reminders" type="button">Schedule Reminder</button>
-            <button class="btn secondary" data-jump="medical" type="button">Update Record</button>
+            <button class="btn secondary" data-jump="history" type="button">Update History</button>
           </div>
         </header>
 
@@ -58,13 +56,13 @@
               <h3>2. Review Match</h3>
               <p>Inspect medicine details and interaction risks.</p>
             </button>
-            <button class="card task" data-jump="reminders" type="button">
-              <h3>3. Schedule Dose</h3>
-              <p>Create reminders and log adherence events.</p>
+            <button class="card task" data-jump="history" type="button">
+              <h3>3. Track History</h3>
+              <p>Store current or past medicine usage for the user.</p>
             </button>
-            <button class="card task" data-jump="medical" type="button">
-              <h3>4. Update Record</h3>
-              <p>Add diagnosis, labs, vitals, and visits.</p>
+            <button class="card task" data-jump="auth" type="button">
+              <h3>4. Manage Access</h3>
+              <p>Sign in or register to access protected APIs.</p>
             </button>
           </div>
           <div class="grid split-2">
@@ -118,19 +116,6 @@
                 <span class="drop-meta" id="ocrFileMeta">PNG/JPG up to backend limit</span>
                 <input id="ocrImageInput" type="file" name="image" accept="image/*" required />
               </label>
-              <div class="camera-panel">
-                <div class="camera-head">
-                  <strong>Or scan with camera</strong>
-                  <span class="drop-meta" id="ocrCameraMeta">Camera is off</span>
-                </div>
-                <video id="ocrCameraPreview" class="camera-preview hidden" playsinline muted></video>
-                <canvas id="ocrCameraCanvas" class="camera-preview hidden" aria-label="Captured image preview"></canvas>
-                <div class="action-row">
-                  <button class="btn secondary" id="ocrStartCameraBtn" type="button">Start Camera</button>
-                  <button class="btn ghost" id="ocrCaptureBtn" type="button">Capture</button>
-                  <button class="btn ghost" id="ocrRetakeBtn" type="button">Retake</button>
-                </div>
-              </div>
               <label>Top K candidates <input type="number" name="top_k" value="5" min="1" max="20" /></label>
               <button class="btn" type="submit">Run OCR Search</button>
             </form>
@@ -172,145 +157,55 @@
           </div>
         </section>
 
-        <section class="tab" id="tab-reminders">
+        <section class="tab" id="tab-history">
           <div class="grid split-2">
-            <form id="reminderForm" class="card form">
-              <h3>Create Reminder</h3>
+            <form id="historyForm" class="card form">
+              <h3>Add Medicine History Entry</h3>
+              <label>Medicine ID (optional) <input type="number" name="medicine_id" /></label>
               <label>Medicine name <input name="medicine_name" required /></label>
-              <label>Dose <input name="dose" required /></label>
-              <label>Times (comma HH:MM) <input name="times" value="08:00,20:00" required /></label>
-              <label>Start date <input type="date" name="start_date" required /></label>
+              <label>Status
+                <select name="status">
+                  <option value="current">current</option>
+                  <option value="past">past</option>
+                </select>
+              </label>
+              <label>Dose <input name="dose" /></label>
+              <label>Start date <input type="date" name="start_date" /></label>
               <label>End date <input type="date" name="end_date" /></label>
-              <label>Timezone <input name="timezone" value="Africa/Cairo" /></label>
               <label>Notes <textarea name="notes"></textarea></label>
-              <label class="inline-check"><input type="checkbox" name="is_active" checked /> Active</label>
-              <button class="btn" type="submit">Create Reminder</button>
+              <button class="btn" type="submit">Save Entry</button>
             </form>
 
             <article class="card">
-              <h3>Reminder Events</h3>
-              <div id="reminderEventsPanel" class="empty">Pick a reminder and open events.</div>
+              <h3>Filters</h3>
+              <form id="historyFilterForm" class="form compact">
+                <label>Status
+                  <select name="status">
+                    <option value="">all</option>
+                    <option value="current">current</option>
+                    <option value="past">past</option>
+                  </select>
+                </label>
+                <label>Start from <input type="date" name="start_date_from" /></label>
+                <label>Start to <input type="date" name="start_date_to" /></label>
+                <label>End from <input type="date" name="end_date_from" /></label>
+                <label>End to <input type="date" name="end_date_to" /></label>
+                <div class="action-row">
+                  <button class="btn secondary" type="submit">Apply</button>
+                  <button class="btn ghost" id="clearHistoryFilters" type="button">Clear</button>
+                </div>
+              </form>
             </article>
           </div>
 
           <article class="card">
-            <h3>Reminder Timeline</h3>
-            <div id="reminderList" class="stack"></div>
-          </article>
-        </section>
-
-        <section class="tab" id="tab-medical">
-          <div class="grid split-2">
-            <form id="recordForm" class="card form">
-              <h3>Patient Profile</h3>
-              <label>Date of birth <input type="date" name="date_of_birth" /></label>
-              <label>Gender
-                <select name="gender">
-                  <option value="">--</option>
-                  <option value="M">Male</option>
-                  <option value="F">Female</option>
-                  <option value="other">Other</option>
-                </select>
-              </label>
-              <label>Blood type
-                <select name="blood_type">
-                  <option value="">--</option>
-                  <option>A+</option><option>A-</option><option>B+</option><option>B-</option>
-                  <option>AB+</option><option>AB-</option><option>O+</option><option>O-</option><option>unknown</option>
-                </select>
-              </label>
-              <label>Height cm <input type="number" step="0.1" name="height_cm" /></label>
-              <label>Weight kg <input type="number" step="0.1" name="weight_kg" /></label>
-              <label>Phone <input name="phone_number" /></label>
-              <label>Emergency contact <input name="emergency_contact_name" /></label>
-              <label>Emergency phone <input name="emergency_contact_phone" /></label>
-              <label>Notes <textarea name="notes"></textarea></label>
-              <button class="btn" type="submit">Save Profile</button>
-            </form>
-
-            <div class="stack">
-              <form id="diagnosisForm" class="card form compact">
-                <h3>Add Diagnosis</h3>
-                <label>Condition <input name="condition_name" required /></label>
-                <label>Status
-                  <select name="status"><option>active</option><option>chronic</option><option>resolved</option></select>
-                </label>
-                <label>Date <input type="date" name="diagnosed_date" /></label>
-                <button class="btn" type="submit">Add Diagnosis</button>
-              </form>
-
-              <form id="allergyForm" class="card form compact">
-                <h3>Add Allergy</h3>
-                <label>Allergen <input name="allergen" required /></label>
-                <label>Type
-                  <select name="allergen_type"><option>drug</option><option>food</option><option>environmental</option><option>other</option></select>
-                </label>
-                <label>Severity
-                  <select name="severity"><option>mild</option><option>moderate</option><option>severe</option></select>
-                </label>
-                <button class="btn" type="submit">Add Allergy</button>
-              </form>
-
-              <form id="vitalForm" class="card form compact">
-                <h3>Add Vitals</h3>
-                <label>Recorded at <input type="datetime-local" name="recorded_at" required /></label>
-                <label>Heart rate <input type="number" name="heart_rate" /></label>
-                <label>Temp C <input type="number" step="0.1" name="temperature_celsius" /></label>
-                <button class="btn" type="submit">Add Vitals</button>
-              </form>
-
-              <form id="labForm" class="card form compact">
-                <h3>Add Lab</h3>
-                <label>Test <input name="test_name" required /></label>
-                <label>Value <input name="result_value" required /></label>
-                <label>Date <input type="date" name="recorded_at" required /></label>
-                <label class="inline-check"><input type="checkbox" name="is_abnormal" /> Abnormal</label>
-                <button class="btn" type="submit">Add Lab</button>
-              </form>
-
-              <form id="visitForm" class="card form compact">
-                <h3>Add Visit</h3>
-                <label>Visit date <input type="date" name="visit_date" required /></label>
-                <label>Reason <textarea name="reason" required></textarea></label>
-                <button class="btn" type="submit">Add Visit</button>
-              </form>
-            </div>
-          </div>
-
-          <article class="card">
-            <h3>Medical Summary</h3>
-            <div id="medicalSummaryPanel" class="stack"></div>
-            <details>
-              <summary>Developer details</summary>
-              <pre id="medicalSummary" class="codeblock">No medical summary loaded.</pre>
-            </details>
+            <h3>Medicine History Timeline</h3>
+            <div id="historyList" class="stack"></div>
           </article>
         </section>
       </section>
     </main>
   </div>
-
-  <dialog id="eventModal" class="modal">
-    <form id="eventForm" class="form" method="dialog">
-      <h3>Log Reminder Event</h3>
-      <input type="hidden" name="reminder_id" />
-      <label>Status
-        <select name="status">
-          <option value="scheduled">scheduled</option>
-          <option value="taken">taken</option>
-          <option value="missed">missed</option>
-          <option value="skipped">skipped</option>
-        </select>
-      </label>
-      <label>Scheduled at <input type="datetime-local" name="scheduled_at" required /></label>
-      <label>Taken at (if taken) <input type="datetime-local" name="taken_at" /></label>
-      <label>Notes <textarea name="notes"></textarea></label>
-      <div class="action-row">
-        <button class="btn" type="submit">Save Event</button>
-        <button class="btn ghost" id="cancelEventModal" type="button">Cancel</button>
-      </div>
-    </form>
-  </dialog>
 
   <dialog id="confirmModal" class="modal">
     <article class="card form">
@@ -323,6 +218,6 @@
     </article>
   </dialog>
 
-  <script src="{% static 'demo/app.js' %}?v=2026-05-01-ocr-format"></script>
+  <script src="{% static 'demo/app.js' %}?v=2026-05-03-medicine-history-ui"></script>
 </body>
 </html>

@@ -12,11 +12,13 @@ Authoritative sources:
 - `api/urls.py`
 - `api/views.py`
 - `api/auth_views.py`
-- `api/medical_views.py`
+- `api/integration_views.py`
+- `api/integration_auth.py`
 - `api/serializers.py`
+- `api/integration_serializers.py`
 - `api/pagination.py`
 - `api/tests.py`
-- `api/management/commands/*.py`
+- `api/test_external_integration.py`
 
 Rules:
 - Any behavior claim must map to one of the sources above.
@@ -34,9 +36,12 @@ Rules:
 6. [Verification Evidence](./verification-evidence.md)
 7. [Contributor Safe Change Guide](./safe-change-guide.md)
 8. [Coverage Audit and Gap Register](./coverage-audit-and-gaps.md)
+9. [API Docs Gap Audit (2026-05-03)](./api-docs-gap-audit-2026-05-03.md)
 
 ## Documentation Quality Gates
 
 - No undocumented public endpoint under `/api/`.
+- No undocumented authentication boundary (JWT vs API key).
+- No undocumented external consent lifecycle behavior.
 - No undocumented configuration setting that changes runtime API/OCR behavior.
 - No undocumented critical fallback behavior (YOLO fallback, OCR engine fallback, low-confidence response behavior).

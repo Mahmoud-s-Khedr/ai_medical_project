@@ -16,6 +16,9 @@ ENV_FILE="$PROJECT_ROOT/.env"
 ENV_EXAMPLE_FILE="$PROJECT_ROOT/.env.example"
 REQ_FILE="$PROJECT_ROOT/requirements.txt"
 MEDICINES_CSV="$PROJECT_ROOT/medicines.csv"
+SEED_PROFILE="${SEED_PROFILE:-large}"
+SEED_PASSWORD="${SEED_PASSWORD:-StrongPass123!}"
+SEED_SHOW_CREDENTIALS="${SEED_SHOW_CREDENTIALS:-false}"
 
 step() {
   echo "[$(date +"%H:%M:%S")] $*"
@@ -119,6 +122,13 @@ if [[ -f "$MEDICINES_CSV" ]]; then
 else
   fail "Medicines CSV not found: $MEDICINES_CSV"
 fi
+
+step "Seeding demo users/data (profile=$SEED_PROFILE) ..."
+seed_cmd=("$PYTHON_BIN" "$PROJECT_ROOT/manage.py" seed_demo_data --profile "$SEED_PROFILE" --password "$SEED_PASSWORD")
+if [[ "$SEED_SHOW_CREDENTIALS" == "true" ]]; then
+  seed_cmd+=("--show-credentials")
+fi
+"${seed_cmd[@]}" || fail "Demo data seeding failed"
 
 step "Starting Django server at http://$HOST:$PORT/ ..."
 cd "$PROJECT_ROOT"

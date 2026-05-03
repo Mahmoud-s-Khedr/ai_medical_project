@@ -35,7 +35,11 @@ REST defaults:
 - Default permission: `IsAuthenticated`
 - Default pagination: `api.pagination.StandardPagination`
 - Default page size: `20`
+- URL format override: disabled (`URL_FORMAT_OVERRIDE=None`)
 - Schema class: drf-spectacular `AutoSchema`
+
+Endpoint-level auth override:
+- External integration endpoints use custom API-key auth via `X-API-Key` (`DeveloperApiKeyAuthentication`).
 
 Throttling:
 - Classes: `AnonRateThrottle`, `UserRateThrottle`

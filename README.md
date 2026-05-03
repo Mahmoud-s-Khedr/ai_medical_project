@@ -63,6 +63,7 @@ Base URL: `http://127.0.0.1:8000`
 - `GET /demo/health/` demo health JSON
 
 For full endpoint contracts, see [docs/api-contracts.md](docs/api-contracts.md).
+Integration/auth details (JWT vs `X-API-Key`) are documented in that contract file.
 
 ## OCR Smoke Test
 

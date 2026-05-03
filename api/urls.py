@@ -12,11 +12,23 @@ from .auth_views import (
     PasswordResetRequestView,
     RegisterView,
 )
+from .integration_views import (
+    AccessRequestDecisionView,
+    DeveloperApiKeyViewSet,
+    DeveloperAppViewSet,
+    ExternalCreateAccessRequestView,
+    ExternalMedicineHistoryView,
+    MedicineHistoryExportXmlView,
+    RevokeDeveloperApiKeyView,
+    UserAccessRequestInboxView,
+)
 from .views import MedicineHistoryViewSet, MedicineViewSet, OCRMedicineSearchView
 
 router = DefaultRouter()
 router.register("medicines", MedicineViewSet, basename="medicine")
 router.register("medicine-history", MedicineHistoryViewSet, basename="medicine-history")
+router.register("integrations/apps", DeveloperAppViewSet, basename="integration-app")
+router.register("integrations/keys", DeveloperApiKeyViewSet, basename="integration-key")
 
 auth_urlpatterns = [
     path("register/", RegisterView.as_view(), name="auth-register"),
@@ -34,4 +46,14 @@ urlpatterns = [
     path("auth/", include(auth_urlpatterns)),
     path("", include(router.urls)),
     path("uploads/ocr-search/", OCRMedicineSearchView.as_view(), name="ocr-medicine-search"),
+    path("integrations/keys/<int:key_id>/revoke/", RevokeDeveloperApiKeyView.as_view(), name="integration-key-revoke"),
+    path("integrations/access-requests/inbox/", UserAccessRequestInboxView.as_view(), name="integration-inbox"),
+    path(
+        "integrations/access-requests/<int:request_id>/<str:decision>/",
+        AccessRequestDecisionView.as_view(),
+        name="integration-access-request-decision",
+    ),
+    path("integrations/medicine-history/export.xml", MedicineHistoryExportXmlView.as_view(), name="medicine-history-export-xml"),
+    path("external/access-requests/", ExternalCreateAccessRequestView.as_view(), name="external-access-request-create"),
+    path("external/medicine-history/<str:username>/", ExternalMedicineHistoryView.as_view(), name="external-medicine-history"),
 ]

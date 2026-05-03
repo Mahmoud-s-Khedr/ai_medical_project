@@ -20,12 +20,13 @@
 - score filtering path
 4. Re-run full suite and validate no regression in medicine search ranking tests.
 
-### Change medical-record/reminder data behavior
+### Change medicine-history or integration consent behavior
 
 1. Update model and serializer constraints consistently.
 2. If schema changes, create migration and test migration compatibility assumptions.
 3. Preserve queryset-level user scoping in viewsets/views.
 4. Add tests for cross-user access denial and filter behavior.
+5. For external APIs, preserve consent gate and API-key revocation behavior.
 
 ### Change auth/password reset behavior
 
@@ -43,5 +44,5 @@
 ## High-Risk Areas
 
 - OCR endpoint error handling and confidence policy (directly affects user guidance).
-- Permission/scoping code in reminders and medical-record resources.
+- Permission/scoping code in medicine-history and integration consent resources.
 - Search ranking/caching logic (can silently change top results).

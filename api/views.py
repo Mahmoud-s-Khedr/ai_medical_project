@@ -73,7 +73,11 @@ def _load_yolo_model() -> Any | None:
         logger.warning("ultralytics is not installed. YOLO detection disabled.")
         return None
 
-    return YOLO(model_path)
+    try:
+        return YOLO(model_path)
+    except Exception:
+        logger.exception("Failed to load YOLO model from %s. Full image OCR will be used.", model_path)
+        return None
 
 
 yolo_model = _load_yolo_model()

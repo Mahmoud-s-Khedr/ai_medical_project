@@ -102,6 +102,7 @@ REST_FRAMEWORK = {
     "DEFAULT_SCHEMA_CLASS": "drf_spectacular.openapi.AutoSchema",
     "DEFAULT_PAGINATION_CLASS": "api.pagination.StandardPagination",
     "PAGE_SIZE": 20,
+    "URL_FORMAT_OVERRIDE": None,
     "DEFAULT_THROTTLE_CLASSES": [
         "rest_framework.throttling.AnonRateThrottle",
         "rest_framework.throttling.UserRateThrottle",
@@ -132,7 +133,7 @@ SPECTACULAR_SETTINGS = {
     "TITLE": "Medicine OCR API",
     "DESCRIPTION": (
         "REST API for medicine lookup via OCR image scanning, "
-        "medication reminders, and fuzzy search against a medicine database."
+        "medicine history tracking, and consent-gated external integrations."
     ),
     "VERSION": "1.0.0",
     "SERVE_INCLUDE_SCHEMA": False,

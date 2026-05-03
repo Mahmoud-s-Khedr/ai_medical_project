@@ -1,65 +1,65 @@
 # API Contracts
 
 Base prefix: `/api/`
-Auth style: `Authorization: Bearer <access_token>` unless endpoint is public.
 
 ## Route Surfaces Outside `/api/`
 
 - `GET /` redirects (`302`) to `/api/docs/`.
-- `GET /demo/` serves the demo app page.
+- `GET /demo/` serves demo app page.
 - `GET /demo/health/` serves demo health JSON.
 - `GET /api/schema/` OpenAPI schema.
 - `GET /api/docs/` Swagger UI.
 - `GET /api/redoc/` ReDoc UI.
 
+## Auth Modes
+
+- JWT user/developer routes: `Authorization: Bearer <access_token>`.
+- External integration routes: `X-API-Key: <raw_api_key>`.
+
 ## Auth Endpoints (`/api/auth/`)
 
 Public (`AllowAny`):
-- `POST /api/auth/register/` throttled (`scope=auth`), returns `user`, `access`, `refresh`.
-- `POST /api/auth/token/` returns JWT pair.
+- `POST /api/auth/register/` (`scope=auth` throttle).
+- `POST /api/auth/token/`.
 - `POST /api/auth/token/refresh/`.
 - `POST /api/auth/token/verify/`.
-- `POST /api/auth/password-reset/` throttled (`scope=auth`), returns non-enumerating success message.
-- `POST /api/auth/password-reset/confirm/` throttled (`scope=auth`).
+- `POST /api/auth/password-reset/` (`scope=auth` throttle).
+- `POST /api/auth/password-reset/confirm/` (`scope=auth` throttle).
 
-Authenticated:
-- `POST /api/auth/logout/` requires `refresh` field in body.
-- `GET /api/auth/me/` returns user profile.
-- `PATCH /api/auth/me/` updates mutable profile fields.
-- `POST /api/auth/me/change-password/` validates old/new password rules.
+JWT-protected:
+- `POST /api/auth/logout/` body requires `refresh`.
+- `GET /api/auth/me/`.
+- `PATCH /api/auth/me/`.
+- `POST /api/auth/me/change-password/`.
 
-Auth error semantics:
-- `401` invalid/missing JWT for protected endpoints.
-- `400` serializer/validation errors (for example invalid reset token, wrong old password, missing refresh token).
-- `429` throttling for endpoints with `scope=auth`.
+Common errors:
+- `400`: validation errors (invalid payload, missing refresh, invalid reset token).
+- `401`: missing/invalid JWT.
+- `429`: throttled auth endpoints.
 
-## Medicines
+## Medicines (`/api/medicines/`)
 
-- `GET /api/medicines/` authenticated list, supports `?search=`.
-- `GET /api/medicines/{id}/` authenticated detail.
-- `POST /api/medicines/` staff-only.
-- `PUT/PATCH/DELETE /api/medicines/{id}/` staff-only.
-- `GET /api/medicines/{id}/interactions/` authenticated.
+JWT-protected:
+- `GET /api/medicines/` supports `?search=`.
+- `GET /api/medicines/{id}/`.
+- `GET /api/medicines/{id}/interactions/`.
 
-Interactions response fields:
-- `medicine`
-- `interaction_notes`
-- `similarity_risk_symptoms`
-- `switching_note`
-- `total_conflicts`
-- `conflicts[]` with `conflict_type`, `risk_level`, `conflict_reason`, `matched_ingredient`, `medicine`
+Staff-only writes:
+- `POST /api/medicines/`
+- `PUT/PATCH/DELETE /api/medicines/{id}/`
 
-Medicines error semantics:
-- `401` unauthenticated access.
-- `403` authenticated non-staff write attempt.
+Common errors:
+- `401` unauthenticated.
+- `403` non-staff write attempt.
 
-## OCR Search
+## OCR Search (`/api/uploads/ocr-search/`)
 
-- `POST /api/uploads/ocr-search/` authenticated, `multipart/form-data`.
-- Required field: `image`.
-- Optional field: `top_k` integer, clamped to `[1, 20]`.
+JWT-protected multipart endpoint:
+- `POST /api/uploads/ocr-search/`
+- Required field: `image`
+- Optional field: `top_k` (int, clamped `1..20`)
 
-Success response fields:
+Response fields:
 - `ocr_confidence`
 - `matched_items`
 - `match_confidence_tier` (`high|medium|low`)
@@ -67,42 +67,165 @@ Success response fields:
 - `message`
 - `processing_time_ms`
 
-Behavior notes:
-- If OCR cannot produce candidates, response is `200` with `matched_items: []`, tier=`low`, action=`retake_photo`.
-- Low tier results are additionally capped by `OCR_LOW_CONFIDENCE_MAX_RESULTS`.
-- YOLO model load/inference failure falls back to full-image OCR.
+Behavior:
+- No OCR candidates still returns `200` with empty `matched_items` and `retake_photo` action.
+- YOLO load/inference failures fall back to full-image OCR.
 
-OCR error semantics:
-- `400` missing `image`, invalid `top_k`, or image decode failure.
-- `413` upload too large (greater than `OCR_MAX_UPLOAD_BYTES`).
-- `500` OCR pipeline exception.
+Common errors:
+- `400` invalid image/top_k/decode.
+- `413` upload too large (`OCR_MAX_UPLOAD_BYTES`).
+- `500` OCR pipeline failure.
 
-## Medicine History
+## Medicine History (`/api/medicine-history/`)
 
-- `GET /api/medicine-history/` authenticated, user-scoped.
-- `POST /api/medicine-history/` authenticated, creates history entry for caller.
-- `GET/PATCH/DELETE /api/medicine-history/{id}/` authenticated, owner-scoped by queryset.
+JWT-protected, user-scoped:
+- `GET /api/medicine-history/`
+- `POST /api/medicine-history/`
+- `GET /api/medicine-history/{id}/`
+- `PATCH /api/medicine-history/{id}/`
+- `DELETE /api/medicine-history/{id}/`
 
-Filter params:
-- `?status=current|past`
-- `?start_date_from=YYYY-MM-DD`
-- `?start_date_to=YYYY-MM-DD`
-- `?end_date_from=YYYY-MM-DD`
-- `?end_date_to=YYYY-MM-DD`
+Filters:
+- `status=current|past`
+- `start_date_from`, `start_date_to`
+- `end_date_from`, `end_date_to`
 
-Validation constraints:
-- `status=current` requires `end_date` to be null.
-- if both dates exist, `end_date` cannot be before `start_date`.
+Validation:
+- `status=current` requires `end_date` null.
+- If both dates are present: `end_date >= start_date`.
+
+## Integration Management (JWT) (`/api/integrations/...`)
+
+Developer app management:
+- `GET /api/integrations/apps/`
+- `POST /api/integrations/apps/`
+- `GET /api/integrations/apps/{id}/`
+- `PATCH /api/integrations/apps/{id}/`
+- `DELETE /api/integrations/apps/{id}/`
+
+API key management:
+- `GET /api/integrations/keys/`
+- `POST /api/integrations/keys/`
+- `POST /api/integrations/keys/{id}/revoke/`
+
+Consent inbox and decisions:
+- `GET /api/integrations/access-requests/inbox/`
+- `POST /api/integrations/access-requests/{id}/approve/`
+- `POST /api/integrations/access-requests/{id}/reject/`
+- `POST /api/integrations/access-requests/{id}/revoke/`
+
+User export:
+- `GET /api/integrations/medicine-history/export.xml`
+
+Key semantics:
+- `POST /api/integrations/keys/` returns generated `api_key` **once**.
+- Stored key material is hashed; only prefix is persisted for display.
+
+Example key-create response:
+```json
+{
+  "id": 7,
+  "app": 2,
+  "name": "primary",
+  "key_prefix": "dev_Gk2...",
+  "last_used_at": null,
+  "revoked_at": null,
+  "created_at": "2026-05-03T18:58:10Z",
+  "api_key": "dev_Gk2h...raw-secret..."
+}
+```
+
+Common errors:
+- `400` payload validation.
+- `401` missing/invalid JWT.
+- `404` key or request not found for current user.
+
+## External Integration APIs (API Key) (`/api/external/...`)
+
+- `POST /api/external/access-requests/`
+- `GET /api/external/medicine-history/{username}/`
+
+Access-request creation body:
+- `username` (required)
+- `purpose` (optional)
+
+Example request:
+```json
+{
+  "username": "patient1",
+  "purpose": "Care coordination"
+}
+```
+
+Consent lifecycle:
+- `pending` -> `approved` or `rejected`
+- `approved` -> `revoked`
+
+Active-request constraint:
+- only one active (`pending` or `approved`) request per `(app, user)`.
+- duplicate active request returns `409`.
+
+History fetch format:
+- JSON default
+- XML when `?format=xml`
+
+Example JSON history response (paginated):
+```json
+{
+  "count": 2,
+  "total_pages": 1,
+  "next": null,
+  "previous": null,
+  "results": [
+    {
+      "id": 11,
+      "medicine_name": "Panadol",
+      "status": "current",
+      "dose": "500mg",
+      "start_date": null,
+      "end_date": null,
+      "notes": "",
+      "created_at": "2026-05-03T19:05:00Z",
+      "updated_at": "2026-05-03T19:05:00Z"
+    }
+  ]
+}
+```
+
+Example XML response shape:
+```xml
+<?xml version="1.0" encoding="utf-8"?>
+<medicine_history_response>
+  <meta>
+    <count>2</count>
+    <total_pages>1</total_pages>
+    <next />
+    <previous />
+  </meta>
+  <results>
+    <entry>
+      <medicine_name>Panadol</medicine_name>
+      <status>current</status>
+    </entry>
+  </results>
+</medicine_history_response>
+```
+
+Common errors:
+- `400` invalid body (`username` unknown, bad payload).
+- `401` missing/invalid/revoked API key.
+- `403` no approved access for `(app, user)`.
+- `409` duplicate active access request.
 
 ## Pagination
 
-List endpoints use `api.pagination.StandardPagination`:
+List endpoints using `api.pagination.StandardPagination` return:
 - `count`
 - `total_pages`
 - `next`
 - `previous`
 - `results`
 
-Query support:
+Query parameters:
 - `page`
-- `page_size` (max `100`).
+- `page_size` (max `100`)

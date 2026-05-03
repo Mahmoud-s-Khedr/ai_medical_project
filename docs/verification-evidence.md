@@ -1,6 +1,6 @@
 # Verification Evidence
 
-Verification date: 2026-05-01
+Verification date: 2026-05-03
 Environment: local repo state in `/home/mk/Downloads/ocr_pipeline_share_2026-04-23`
 
 ## Baseline Checks
@@ -10,7 +10,7 @@ Environment: local repo state in `/home/mk/Downloads/ocr_pipeline_share_2026-04-
 
 2. `python manage.py test -v 2`
 - Expected: pass.
-- Critical coverage areas: auth, medicines, OCR upload, reminders/events validation, medical record resources, search ranking, routing.
+- Critical coverage areas: auth, medicines, OCR upload, medicine-history validation/scoping, external integration consent/API-key flows, search ranking, routing.
 
 3. `python manage.py migrate --noinput`
 - Expected: no pending migrations.
@@ -23,7 +23,7 @@ Environment: local repo state in `/home/mk/Downloads/ocr_pipeline_share_2026-04-
 Routes and endpoint coverage:
 - `/` redirect to `/api/docs/` documented.
 - `/demo/` and `/demo/health/` documented.
-- All `/api/auth/*`, `/api/medicines/*`, `/api/reminders/*`, `/api/medical-record/*`, and `/api/uploads/ocr-search/` documented.
+- All `/api/auth/*`, `/api/medicines/*`, `/api/medicine-history/*`, `/api/integrations/*`, `/api/external/*`, and `/api/uploads/ocr-search/` documented.
 
 OCR response contract:
 - Uses `matched_items` (not `matches`) in docs.
@@ -31,9 +31,9 @@ OCR response contract:
 - Documents `top_k` clamp to `[1, 20]` and low-tier result cap behavior.
 
 Validation and error constraints:
-- Reminders `times` HH:MM and non-empty list constraint documented.
 - `end_date < start_date` rejection documented.
-- Reminder event `status=taken` requires `taken_at` documented.
+- Integration duplicate active request (`pending|approved`) `409` behavior documented.
+- External API-key auth failure and consent-gate errors (`401|403`) documented.
 - OCR upload and decode failure semantics (`400`, `413`, `500`) documented.
 
 Pagination shape:

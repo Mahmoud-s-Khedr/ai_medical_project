@@ -14,6 +14,7 @@ _SEARCH_CACHE: dict[str, Any] = {
     "loaded_at": 0.0,
     "ttl_seconds": 300,
     "items": [],
+    "by_id": {},
 }
 
 
@@ -25,7 +26,7 @@ def _get_setting(name: str, default: Any) -> Any:
     return getattr(settings, name, default)
 
 
-def _load_medicine_rows() -> list[tuple[int, str, str, str, str, str, str, str]]:
+def _load_medicine_rows() -> list[dict[str, Any]]:
     now = time.time()
     ttl = int(_get_setting("SEARCH_MEDICINE_CACHE_TTL_SECONDS", _SEARCH_CACHE["ttl_seconds"]))
     cached_items = _SEARCH_CACHE["items"]
@@ -33,7 +34,7 @@ def _load_medicine_rows() -> list[tuple[int, str, str, str, str, str, str, str]]
     if cached_items and (now - _SEARCH_CACHE["loaded_at"]) < ttl and len(cached_items) == current_count:
         return cached_items
 
-    rows = list(
+    rows_raw = list(
         Medicine.objects.values_list(
             "id",
             "trade_name",
@@ -45,7 +46,32 @@ def _load_medicine_rows() -> list[tuple[int, str, str, str, str, str, str, str]]
             "drug_class_norm",
         )
     )
+    rows: list[dict[str, Any]] = []
+    by_id: dict[int, dict[str, Any]] = {}
+    for item in rows_raw:
+        (
+            medicine_id,
+            trade_name,
+            active_ingredient,
+            drug_class,
+            raw_aliases,
+            trade_name_norm,
+            active_ingredient_norm,
+            drug_class_norm,
+        ) = item
+        aliases = _parse_aliases_for_search(raw_aliases)
+        row = {
+            "id": medicine_id,
+            "aliases": aliases,
+            "trade_name_norm": normalize_query(trade_name_norm or trade_name),
+            "active_ingredient_norm": normalize_query(active_ingredient_norm or active_ingredient),
+            "drug_class_norm": normalize_query(drug_class_norm or drug_class),
+        }
+        rows.append(row)
+        by_id[medicine_id] = row
+
     _SEARCH_CACHE["items"] = rows
+    _SEARCH_CACHE["by_id"] = by_id
     _SEARCH_CACHE["loaded_at"] = now
     _SEARCH_CACHE["ttl_seconds"] = ttl
     return rows
@@ -182,11 +208,16 @@ def search_medicines_ranked(
 
     rows = _load_medicine_rows()
     fuzzy_candidates: list[tuple[int, float]] = []
-    for medicine_id, trade_name, active_ingredient, drug_class, raw_aliases, *_norms in rows:
-        aliases = _parse_aliases_for_search(raw_aliases)
-        fuzzy = _fuzzy_score(query_norm, trade_name, active_ingredient, drug_class, aliases)
+    for row in rows:
+        fuzzy = _fuzzy_score(
+            query_norm,
+            row["trade_name_norm"],
+            row["active_ingredient_norm"],
+            row["drug_class_norm"],
+            row["aliases"],
+        )
         if fuzzy >= fuzzy_min:
-            fuzzy_candidates.append((medicine_id, fuzzy))
+            fuzzy_candidates.append((row["id"], fuzzy))
     fuzzy_candidates.sort(key=lambda item: item[1], reverse=True)
     fuzzy_ids = {medicine_id for medicine_id, _score in fuzzy_candidates[:candidate_limit]}
 
@@ -201,26 +232,32 @@ def search_medicines_ranked(
         if medicine is None:
             continue
 
-        aliases = _parse_aliases_for_search(medicine.search_aliases)
+        cache_row = _SEARCH_CACHE.get("by_id", {}).get(medicine_id, {})
+        aliases = cache_row.get("aliases", _parse_aliases_for_search(medicine.search_aliases))
+        trade_norm = cache_row.get("trade_name_norm", normalize_query(medicine.trade_name_norm or medicine.trade_name))
+        ingredient_norm = cache_row.get(
+            "active_ingredient_norm", normalize_query(medicine.active_ingredient_norm or medicine.active_ingredient)
+        )
+        class_norm = cache_row.get("drug_class_norm", normalize_query(medicine.drug_class_norm or medicine.drug_class))
         fulltext = _fulltext_score(
             query_norm,
-            medicine.trade_name_norm or medicine.trade_name,
-            medicine.active_ingredient_norm or medicine.active_ingredient,
-            medicine.drug_class_norm or medicine.drug_class,
+            trade_norm,
+            ingredient_norm,
+            class_norm,
             aliases,
         )
         fuzzy = _fuzzy_score(
             query_norm,
-            medicine.trade_name_norm or medicine.trade_name,
-            medicine.active_ingredient_norm or medicine.active_ingredient,
-            medicine.drug_class_norm or medicine.drug_class,
+            trade_norm,
+            ingredient_norm,
+            class_norm,
             aliases,
         )
         length_factor, length_ratio, matched_len = _length_compatibility_factor(
             query_norm,
-            medicine.trade_name_norm or medicine.trade_name,
-            medicine.active_ingredient_norm or medicine.active_ingredient,
-            medicine.drug_class_norm or medicine.drug_class,
+            trade_norm,
+            ingredient_norm,
+            class_norm,
             penalty_strength_multiplier=length_penalty_strength_multiplier,
         )
         alias_boost = 1.0 if query_norm in aliases else 0.0

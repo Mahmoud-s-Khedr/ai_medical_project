@@ -85,7 +85,7 @@ def _run_easyocr(img: np.ndarray) -> tuple[str, float]:
     return " ".join(texts), sum(confidences) / len(confidences)
 
 
-def _run_tesseract(img: np.ndarray) -> tuple[str, float]:
+def _run_tesseract(img: np.ndarray, psm_modes: tuple[str, ...] = ("7",)) -> tuple[str, float]:
     global _TESSERACT_NOT_FOUND_LOGGED
     try:
         import pytesseract
@@ -97,7 +97,7 @@ def _run_tesseract(img: np.ndarray) -> tuple[str, float]:
     best_conf = 0.0
     whitelist = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_. "
 
-    for psm in ("6", "7", "11"):
+    for psm in psm_modes:
         config = f"--psm {psm} --oem 3 -c tessedit_char_whitelist={whitelist}"
         try:
             text = pytesseract.image_to_string(img, config=config).strip()
@@ -135,10 +135,13 @@ def _run_tesseract(img: np.ndarray) -> tuple[str, float]:
 def try_rotations_and_ocr(
     crop: np.ndarray,
     debug: bool = False,
-    angles: tuple[int, ...] = (0, -10, 10, -20, 20, -90, 90),
+    angles: tuple[int, ...] = (0, -10, 10),
     early_exit_confidence: float = 0.92,
     skip_tesseract_if_easyocr_confident: float = 0.88,
     use_tesseract: bool = True,
+    tesseract_psms: tuple[str, ...] = ("7",),
+    easyocr_fast_stop_confidence: float = 0.94,
+    stats: dict[str, int] | None = None,
 ) -> tuple[str, float, int, str]:
     """
     Run OCR over several rotations and return:
@@ -153,13 +156,23 @@ def try_rotations_and_ocr(
     # This avoids repeated denoise/CLAHE/resize work on CPU.
     processed_base = enhance_image_for_ocr(crop)
 
+    def _is_phrase_like(text: str) -> bool:
+        tokens = [tok for tok in text.split() if any(ch.isalnum() for ch in tok)]
+        return len(tokens) >= 2 and sum(1 for tok in tokens if len(tok) >= 3) >= 2
+
     for angle in angles:
+        if stats is not None:
+            stats["angles_used"] = stats.get("angles_used", 0) + 1
         processed = rotate_bound(processed_base, angle) if angle else processed_base
 
         easy_text, easy_conf = _run_easyocr(processed)
+        if stats is not None:
+            stats["engine_calls"] = stats.get("engine_calls", 0) + 1
         engine_results = [("easyocr", (easy_text, easy_conf))]
         if use_tesseract and not (easy_text and easy_conf >= skip_tesseract_if_easyocr_confident):
-            engine_results.append(("tesseract", _run_tesseract(processed)))
+            engine_results.append(("tesseract", _run_tesseract(processed, psm_modes=tesseract_psms)))
+            if stats is not None:
+                stats["engine_calls"] = stats.get("engine_calls", 0) + 1
 
         for engine, (text, conf) in engine_results:
             if debug:
@@ -169,6 +182,13 @@ def try_rotations_and_ocr(
                 best_conf = conf
                 best_angle = angle
                 best_engine = engine
+        if easy_text and easy_conf >= easyocr_fast_stop_confidence and _is_phrase_like(easy_text):
+            if easy_conf >= best_conf:
+                best_text = easy_text
+                best_conf = easy_conf
+                best_angle = angle
+                best_engine = "easyocr"
+            break
         if best_conf >= early_exit_confidence:
             break
 

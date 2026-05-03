@@ -98,10 +98,7 @@ REST_FRAMEWORK = {
     "DEFAULT_PERMISSION_CLASSES": [
         "rest_framework.permissions.IsAuthenticated",
     ],
-    "DEFAULT_RENDERER_CLASSES": [
-        "rest_framework.renderers.JSONRenderer",
-        "rest_framework.renderers.BrowsableAPIRenderer",
-    ],
+    "DEFAULT_RENDERER_CLASSES": ["rest_framework.renderers.JSONRenderer"],
     "DEFAULT_SCHEMA_CLASS": "drf_spectacular.openapi.AutoSchema",
     "DEFAULT_PAGINATION_CLASS": "api.pagination.StandardPagination",
     "PAGE_SIZE": 20,
@@ -115,6 +112,8 @@ REST_FRAMEWORK = {
         "auth": "10/hour",
     },
 }
+if DEBUG:
+    REST_FRAMEWORK["DEFAULT_RENDERER_CLASSES"].append("rest_framework.renderers.BrowsableAPIRenderer")
 
 PASSWORD_RESET_TIMEOUT = 86400  # 24 hours
 
@@ -163,9 +162,16 @@ YOLO_MODEL_PATH = str(BASE_DIR / "drug_detector.pt")
 OCR_MAX_UPLOAD_BYTES = env.int("OCR_MAX_UPLOAD_BYTES", default=8 * 1024 * 1024)
 OCR_MEDICINE_CACHE_TTL_SECONDS = env.int("OCR_MEDICINE_CACHE_TTL_SECONDS", default=300)
 OCR_ROTATION_ANGLES = env("OCR_ROTATION_ANGLES", default="0,-10,10,-20,20")
+OCR_FAST_ANGLE_SET = env("OCR_FAST_ANGLE_SET", default="0,-10,10")
 OCR_EARLY_EXIT_CONFIDENCE = env.float("OCR_EARLY_EXIT_CONFIDENCE", default=0.90)
+OCR_EASYOCR_FAST_STOP_CONFIDENCE = env.float("OCR_EASYOCR_FAST_STOP_CONFIDENCE", default=0.94)
 OCR_SKIP_TESSERACT_IF_EASYOCR_CONFIDENT = env.float("OCR_SKIP_TESSERACT_IF_EASYOCR_CONFIDENT", default=0.88)
 OCR_USE_TESSERACT = env.bool("OCR_USE_TESSERACT", default=False)
+OCR_TESSERACT_PSMS = env("OCR_TESSERACT_PSMS", default="7")
+OCR_MAX_DIMENSION = env.int("OCR_MAX_DIMENSION", default=1600)
+OCR_MAX_CROPS = env.int("OCR_MAX_CROPS", default=3)
+OCR_ENABLE_CROP_DEDUP = env.bool("OCR_ENABLE_CROP_DEDUP", default=True)
+OCR_CROP_DEDUP_IOU_THRESHOLD = env.float("OCR_CROP_DEDUP_IOU_THRESHOLD", default=0.50)
 OCR_MIN_TOKEN_LENGTH = env.int("OCR_MIN_TOKEN_LENGTH", default=3)
 OCR_TOKEN_STOPWORDS = env(
     "OCR_TOKEN_STOPWORDS",

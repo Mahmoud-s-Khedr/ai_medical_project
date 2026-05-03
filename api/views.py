@@ -41,13 +41,19 @@ _DEFAULT_OCR_STOPWORDS = {
 
 
 def _ocr_angles() -> tuple[int, ...]:
-    raw = str(getattr(settings, "OCR_ROTATION_ANGLES", "0,-10,10,-20,20"))
+    raw = str(getattr(settings, "OCR_FAST_ANGLE_SET", getattr(settings, "OCR_ROTATION_ANGLES", "0,-10,10")))
     try:
         parsed = tuple(int(item.strip()) for item in raw.split(",") if item.strip())
     except ValueError:
-        logger.warning("Invalid OCR_ROTATION_ANGLES=%r; using defaults", raw)
-        return (0, -10, 10, -20, 20)
-    return parsed or (0, -10, 10, -20, 20)
+        logger.warning("Invalid OCR_FAST_ANGLE_SET/OCR_ROTATION_ANGLES=%r; using defaults", raw)
+        return (0, -10, 10)
+    return parsed or (0, -10, 10)
+
+
+def _tesseract_psms() -> tuple[str, ...]:
+    raw = str(getattr(settings, "OCR_TESSERACT_PSMS", "7"))
+    parsed = tuple(chunk.strip() for chunk in raw.split(",") if chunk.strip())
+    return parsed or ("7",)
 
 
 def _max_upload_bytes() -> int:
@@ -77,21 +83,58 @@ def _pil_to_rgb_array(pil_img: Image.Image) -> np.ndarray:
     return np.array(pil_img.convert("RGB"), dtype=np.uint8)
 
 
-def _extract_crops(image_rgb: np.ndarray) -> list[np.ndarray]:
+def _resize_for_ocr(image_rgb: np.ndarray) -> np.ndarray:
+    max_dimension = int(getattr(settings, "OCR_MAX_DIMENSION", 1600))
+    h, w = image_rgb.shape[:2]
+    largest = max(h, w)
+    if largest <= max_dimension:
+        return image_rgb
+    scale = max_dimension / float(largest)
+    new_w = max(1, int(w * scale))
+    new_h = max(1, int(h * scale))
+    resampling = getattr(Image, "Resampling", Image).BILINEAR
+    return np.array(Image.fromarray(image_rgb).resize((new_w, new_h), resample=resampling), dtype=np.uint8)
+
+
+def _box_iou(a: tuple[int, int, int, int], b: tuple[int, int, int, int]) -> float:
+    ax1, ay1, ax2, ay2 = a
+    bx1, by1, bx2, by2 = b
+    inter_x1 = max(ax1, bx1)
+    inter_y1 = max(ay1, by1)
+    inter_x2 = min(ax2, bx2)
+    inter_y2 = min(ay2, by2)
+    inter_w = max(0, inter_x2 - inter_x1)
+    inter_h = max(0, inter_y2 - inter_y1)
+    inter_area = inter_w * inter_h
+    if inter_area == 0:
+        return 0.0
+    area_a = max(0, ax2 - ax1) * max(0, ay2 - ay1)
+    area_b = max(0, bx2 - bx1) * max(0, by2 - by1)
+    denom = (area_a + area_b - inter_area)
+    return (inter_area / denom) if denom > 0 else 0.0
+
+
+def _extract_crops(image_rgb: np.ndarray) -> tuple[list[np.ndarray], dict[str, int]]:
+    meta = {"crop_count_raw": 0, "crop_count_used": 0}
     if yolo_model is None:
-        return [image_rgb]
+        meta["crop_count_raw"] = 1
+        meta["crop_count_used"] = 1
+        return [image_rgb], meta
 
     try:
         results = yolo_model(image_rgb)
     except Exception:
         logger.exception("YOLO inference failed. Falling back to full image OCR.")
-        return [image_rgb]
+        meta["crop_count_raw"] = 1
+        meta["crop_count_used"] = 1
+        return [image_rgb], meta
 
-    crops: list[np.ndarray] = []
+    candidates: list[tuple[tuple[int, int, int, int], float, int]] = []
     h_img, w_img = image_rgb.shape[:2]
     for result in results:
-        boxes = result.boxes.xyxy.cpu().numpy()
-        for box in boxes:
+        boxes = result.boxes.xyxy.cpu().numpy() if result.boxes is not None else []
+        confs = result.boxes.conf.cpu().numpy() if (result.boxes is not None and result.boxes.conf is not None) else []
+        for idx, box in enumerate(boxes):
             x1, y1, x2, y2 = map(int, box)
             pad_x = max(4, int((x2 - x1) * 0.03))
             pad_y = max(4, int((y2 - y1) * 0.03))
@@ -100,29 +143,72 @@ def _extract_crops(image_rgb: np.ndarray) -> list[np.ndarray]:
             x2 = min(w_img, x2 + pad_x)
             y2 = min(h_img, y2 + pad_y)
             if x2 > x1 and y2 > y1:
-                crops.append(image_rgb[y1:y2, x1:x2])
+                conf = float(confs[idx]) if idx < len(confs) else 0.0
+                area = (x2 - x1) * (y2 - y1)
+                candidates.append(((x1, y1, x2, y2), conf, area))
+    meta["crop_count_raw"] = len(candidates)
 
-    return crops or [image_rgb]
+    if not candidates:
+        meta["crop_count_used"] = 1
+        return [image_rgb], meta
+
+    candidates.sort(key=lambda item: (item[1], item[2]), reverse=True)
+    use_dedup = bool(getattr(settings, "OCR_ENABLE_CROP_DEDUP", True))
+    iou_threshold = float(getattr(settings, "OCR_CROP_DEDUP_IOU_THRESHOLD", 0.50))
+    max_crops = max(1, int(getattr(settings, "OCR_MAX_CROPS", 3)))
+
+    kept: list[tuple[int, int, int, int]] = []
+    for box, _conf, _area in candidates:
+        if use_dedup and any(_box_iou(box, existing) >= iou_threshold for existing in kept):
+            continue
+        kept.append(box)
+        if len(kept) >= max_crops:
+            break
+
+    if not kept:
+        meta["crop_count_used"] = 1
+        return [image_rgb], meta
+
+    crops = [image_rgb[y1:y2, x1:x2] for (x1, y1, x2, y2) in kept]
+    meta["crop_count_used"] = len(crops)
+    return crops, meta
 
 
 def _ocr_tokens_from_image(image_rgb: np.ndarray) -> tuple[list[str], dict[str, Any]]:
     candidates: list[str] = []
-    best_meta: dict[str, Any] = {"confidence": 0.0, "angle": 0, "engine": ""}
+    best_meta: dict[str, Any] = {
+        "confidence": 0.0,
+        "angle": 0,
+        "engine": "",
+        "crop_count_raw": 0,
+        "crop_count_used": 0,
+        "angles_used": 0,
+        "engine_calls": 0,
+    }
     angles = _ocr_angles()
     early_exit_confidence = float(getattr(settings, "OCR_EARLY_EXIT_CONFIDENCE", 0.90))
+    easyocr_fast_stop_confidence = float(getattr(settings, "OCR_EASYOCR_FAST_STOP_CONFIDENCE", 0.94))
     skip_tesseract_if_easyocr_confident = float(
         getattr(settings, "OCR_SKIP_TESSERACT_IF_EASYOCR_CONFIDENT", 0.88)
     )
     use_tesseract = bool(getattr(settings, "OCR_USE_TESSERACT", False))
+    tesseract_psms = _tesseract_psms()
+    stats: dict[str, int] = {"angles_used": 0, "engine_calls": 0}
+    crops, crop_meta = _extract_crops(image_rgb)
+    best_meta["crop_count_raw"] = crop_meta["crop_count_raw"]
+    best_meta["crop_count_used"] = crop_meta["crop_count_used"]
 
-    for crop in _extract_crops(image_rgb):
+    for crop in crops:
         best_text, best_conf, angle, engine = try_rotations_and_ocr(
             crop,
             debug=False,
             angles=angles,
             early_exit_confidence=early_exit_confidence,
+            easyocr_fast_stop_confidence=easyocr_fast_stop_confidence,
             skip_tesseract_if_easyocr_confident=skip_tesseract_if_easyocr_confident,
             use_tesseract=use_tesseract,
+            tesseract_psms=tesseract_psms,
+            stats=stats,
         )
         if best_conf >= best_meta["confidence"]:
             best_meta = {"confidence": best_conf, "angle": angle, "engine": engine}
@@ -132,7 +218,10 @@ def _ocr_tokens_from_image(image_rgb: np.ndarray) -> tuple[list[str], dict[str, 
         normalized_candidates = _prepare_ocr_candidates(best_text)
         if normalized_candidates:
             candidates.extend(normalized_candidates)
-
+    best_meta["crop_count_raw"] = crop_meta["crop_count_raw"]
+    best_meta["crop_count_used"] = crop_meta["crop_count_used"]
+    best_meta["angles_used"] = stats["angles_used"]
+    best_meta["engine_calls"] = stats["engine_calls"]
     return list(dict.fromkeys(candidates)), best_meta
 
 
@@ -196,20 +285,7 @@ def _fuzzy_search_medicines(
         query_weight=query_weight,
         length_penalty_strength_multiplier=length_penalty_strength_multiplier,
     )
-    results: list[dict[str, Any]] = []
-    for item in ranked:
-        medicine = item["medicine"]
-        serialized = MedicineSerializer(medicine).data
-        serialized["name"] = medicine.trade_name
-        serialized["score"] = item["score"]
-        serialized["_rank_score"] = item["_rank_score"]
-        serialized["matched_query"] = item["matched_query"]
-        serialized["debug_length_factor"] = item["_debug_length_factor"]
-        serialized["debug_length_ratio"] = item["_debug_length_ratio"]
-        serialized["debug_query_length"] = item["_debug_query_len"]
-        serialized["debug_matched_length"] = item["_debug_match_len"]
-        results.append(serialized)
-    return results
+    return ranked
 
 
 def _confidence_tier(ocr_confidence: float, top_score: float) -> str:
@@ -387,6 +463,7 @@ class OCRMedicineSearchView(APIView):
             pil_img = Image.open(io.BytesIO(image_bytes))
             pil_img.load()  # force full decode so PIL catches corrupt/bomb images early
             image_rgb = _pil_to_rgb_array(pil_img)
+            image_rgb = _resize_for_ocr(image_rgb)
         except Exception:
             logger.exception("Image decode failed")
             return Response({"error": "Cannot decode the provided image."}, status=status.HTTP_400_BAD_REQUEST)
@@ -417,7 +494,10 @@ class OCRMedicineSearchView(APIView):
             ocr_ms = ((search_started - ocr_started) * 1000.0) if ocr_started else 0.0
             total_ms = (perf_counter() - req_started) * 1000.0
             logger.warning(
-                "ocr_search_timing user_id=%s decode_ms=%.1f ocr_ms=%.1f search_ms=%.1f total_ms=%.1f tokens=%s matches=%s",
+                (
+                    "ocr_search_timing user_id=%s decode_ms=%.1f ocr_ms=%.1f search_ms=%.1f total_ms=%.1f "
+                    "tokens=%s matches=%s crop_count_raw=%s crop_count_used=%s angles_used=%s engine_calls=%s"
+                ),
                 request.user.id,
                 decode_ms,
                 ocr_ms,
@@ -425,6 +505,10 @@ class OCRMedicineSearchView(APIView):
                 total_ms,
                 0,
                 0,
+                meta.get("crop_count_raw", 0),
+                meta.get("crop_count_used", 0),
+                meta.get("angles_used", 0),
+                meta.get("engine_calls", 0),
             )
             return Response(
                 {
@@ -450,7 +534,8 @@ class OCRMedicineSearchView(APIView):
                 length_penalty_strength_multiplier=1.0,
             )
             for hit in phrase_hits:
-                seen[hit["id"]] = hit
+                med_id = hit["medicine"].id
+                seen[med_id] = hit
             if phrase_hits:
                 phrase_top_score = max(float(hit.get("score", 0.0)) for hit in phrase_hits)
 
@@ -477,7 +562,7 @@ class OCRMedicineSearchView(APIView):
                 query_weight=query_weight,
                 length_penalty_strength_multiplier=penalty_multiplier,
             ):
-                med_id = hit["id"]
+                med_id = hit["medicine"].id
                 if med_id not in seen or hit["_rank_score"] > seen[med_id]["_rank_score"]:
                     seen[med_id] = hit
 
@@ -492,6 +577,21 @@ class OCRMedicineSearchView(APIView):
         if tier == "low":
             top_k = min(top_k, low_tier_cap)
         matches = matches[:top_k]
+        include_match_debug = bool(getattr(settings, "OCR_INCLUDE_MATCH_DEBUG", True))
+        serialized_matches: list[dict[str, Any]] = []
+        for item in matches:
+            medicine = item["medicine"]
+            payload = MedicineSerializer(medicine).data
+            payload["name"] = medicine.trade_name
+            payload["score"] = item["score"]
+            if include_match_debug:
+                payload["_rank_score"] = item["_rank_score"]
+                payload["matched_query"] = item["matched_query"]
+                payload["debug_length_factor"] = item["_debug_length_factor"]
+                payload["debug_length_ratio"] = item["_debug_length_ratio"]
+                payload["debug_query_length"] = item["_debug_query_len"]
+                payload["debug_matched_length"] = item["_debug_match_len"]
+            serialized_matches.append(payload)
 
         message = ""
         if tier == "low":
@@ -519,20 +619,27 @@ class OCRMedicineSearchView(APIView):
         search_ms = (perf_counter() - search_started) * 1000.0 if search_started else 0.0
         total_ms = (perf_counter() - req_started) * 1000.0
         logger.warning(
-            "ocr_search_timing user_id=%s decode_ms=%.1f ocr_ms=%.1f search_ms=%.1f total_ms=%.1f tokens=%s matches=%s",
+            (
+                "ocr_search_timing user_id=%s decode_ms=%.1f ocr_ms=%.1f search_ms=%.1f total_ms=%.1f "
+                "tokens=%s matches=%s crop_count_raw=%s crop_count_used=%s angles_used=%s engine_calls=%s"
+            ),
             request.user.id,
             decode_ms,
             ocr_ms,
             search_ms,
             total_ms,
             len(tokens),
-            len(matches),
+            len(serialized_matches),
+            meta.get("crop_count_raw", 0),
+            meta.get("crop_count_used", 0),
+            meta.get("angles_used", 0),
+            meta.get("engine_calls", 0),
         )
 
         return Response(
             {
                 "ocr_confidence": meta["confidence"],
-                "matched_items": matches,
+                "matched_items": serialized_matches,
                 "match_confidence_tier": tier,
                 "action_hint": action,
                 "message": message,

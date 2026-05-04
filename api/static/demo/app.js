@@ -7,6 +7,7 @@
     auth: { title: "Authentication", subtitle: "Sign in or register to access protected APIs." },
     security: { title: "Account Security", subtitle: "Change password and execute password reset lifecycle endpoints." },
     ocr: { title: "OCR Scan", subtitle: "Upload package photo and evaluate confidence-driven results." },
+    tts: { title: "Text to Speech", subtitle: "Generate bilingual medicine-safe speech from Arabic/English text." },
     medicines: { title: "Medicine Lookup", subtitle: "Search, inspect details, and review interaction risks." },
     history: { title: "Medicine History", subtitle: "Track current/past medicine usage and timeline updates." },
     integrations: { title: "Integrations", subtitle: "Manage apps/keys and approve or reject access requests." },
@@ -25,6 +26,7 @@
     cameraCaptureBlob: null,
     cameraSnapshotUrl: "",
     externalApiKey: localStorage.getItem("demo_external_api_key") || "",
+    ttsAudioUrl: "",
   };
 
   function showToast(message, type = "success") {
@@ -147,6 +149,32 @@
     return payload;
   }
 
+  async function requestBinary(path, options = {}, retry = true) {
+    const headers = Object.assign({}, options.headers || {});
+    const isFormData = options.body instanceof FormData;
+    if (!isFormData && !(options.body instanceof Blob) && !(options.body instanceof ArrayBuffer)) {
+      headers["Content-Type"] = headers["Content-Type"] || "application/json";
+    }
+    if (state.access) headers.Authorization = `Bearer ${state.access}`;
+
+    const response = await fetch(path, Object.assign({}, options, { headers }));
+
+    if (response.status === 401 && retry && state.refresh) {
+      const refreshed = await refreshToken();
+      if (refreshed) return requestBinary(path, options, false);
+    }
+
+    if (!response.ok) {
+      const payload = await parsePayload(response);
+      const error = new Error(normalizeError(payload));
+      error.payload = payload;
+      error.status = response.status;
+      throw error;
+    }
+    const blob = await response.blob();
+    return { blob, contentType: response.headers.get("content-type") || "", headers: response.headers };
+  }
+
   async function requestExternal(path, options = {}) {
     const headers = Object.assign({}, options.headers || {});
     if (!state.externalApiKey) throw new Error("Set API key mode first.");
@@ -226,8 +254,16 @@
       <li>${state.access ? "JWT session active" : "Sign in before protected workflows"}</li>
       <li>${state.externalApiKey ? "External API key mode active" : "Set external API key to test /api/external routes"}</li>
       <li>OCR route: <code>/api/uploads/ocr-search/</code></li>
+      <li>TTS route: <code>/api/tts/speak/</code> (JWT required)</li>
       <li>Integration route set: <code>/api/integrations/*</code></li>
     `;
+  }
+
+  function revokeTtsAudioUrl() {
+    if (state.ttsAudioUrl) {
+      URL.revokeObjectURL(state.ttsAudioUrl);
+      state.ttsAudioUrl = "";
+    }
   }
 
   function asList(payload) {
@@ -710,6 +746,63 @@
     });
   }
 
+  function bindTTS() {
+    const form = $("#ttsForm");
+    const textInput = $("#ttsTextInput");
+    const charChip = $("#ttsCharCountChip");
+    const output = $("#ttsOutput");
+    const debugOutput = $("#ttsDebugOutput");
+
+    function updateCharCount() {
+      charChip.textContent = `${textInput.value.length} chars`;
+    }
+    textInput.addEventListener("input", updateCharCount);
+    updateCharCount();
+
+    form.addEventListener("submit", async (event) => {
+      event.preventDefault();
+      setLoading(form, true);
+      output.innerHTML = placeholderSkeleton(2);
+      try {
+        const payload = cleanObject(parseForm(form));
+        const startedAt = new Date();
+        const result = await requestBinary("/api/tts/speak/", {
+          method: "POST",
+          body: JSON.stringify(payload),
+        });
+        revokeTtsAudioUrl();
+        state.ttsAudioUrl = URL.createObjectURL(result.blob);
+
+        const sizeKb = (result.blob.size / 1024).toFixed(1);
+        output.innerHTML = `
+          <div class="stack">
+            <audio controls src="${state.ttsAudioUrl}"></audio>
+            <div class="action-row">
+              <a class="btn secondary" href="${state.ttsAudioUrl}" download="speech.mp3">Download MP3</a>
+            </div>
+            <div class="meta">Generated ${startedAt.toLocaleString()} • ${sizeKb} KB • ${result.contentType || "audio/mpeg"}</div>
+          </div>
+        `;
+
+        debugOutput.textContent = pretty({
+          request: payload,
+          response: {
+            content_type: result.contentType,
+            bytes: result.blob.size,
+            generated_at: startedAt.toISOString(),
+          },
+        });
+        showToast("TTS audio generated.", "success");
+      } catch (error) {
+        output.innerHTML = `<div class="empty">${error.message}</div>`;
+        debugOutput.textContent = error.payload ? pretty(error.payload) : error.message;
+        showToast(error.message, "error");
+      } finally {
+        setLoading(form, false);
+      }
+    });
+  }
+
   function bindMedicines() {
     $("#medicineSearchForm").addEventListener("submit", async (event) => {
       event.preventDefault();
@@ -1056,6 +1149,7 @@
     bindAuth();
     bindSecurity();
     bindOCR();
+    bindTTS();
     bindMedicines();
     bindHistory();
     bindIntegrations();
@@ -1074,4 +1168,5 @@
   }
 
   bootstrap();
+  window.addEventListener("beforeunload", revokeTtsAudioUrl);
 })();

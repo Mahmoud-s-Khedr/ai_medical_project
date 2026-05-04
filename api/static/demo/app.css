@@ -329,6 +329,8 @@ details summary { cursor: pointer; color: var(--secondary); font-weight: 600; ma
 #ocrMatches .card { padding: 12px; }
 
 #keyWarning { margin-bottom: 8px; }
+#ttsOutput audio { width: 100%; margin: 10px 0; }
+#ttsOutput .meta { color: var(--muted); font-size: 13px; }
 
 @media (max-width: 1120px) {
   .cards-4 { grid-template-columns: repeat(2, minmax(0, 1fr)); }

@@ -76,6 +76,37 @@ Common errors:
 - `413` upload too large (`OCR_MAX_UPLOAD_BYTES`).
 - `500` OCR pipeline failure.
 
+## Text-to-Speech (`/api/tts/speak/`)
+
+JWT-protected JSON endpoint:
+- `POST /api/tts/speak/`
+
+Request body:
+- `text` (required, non-empty string)
+- `voice` (optional string, e.g. `en-US-JennyNeural`, `ar-EG-SalmaNeural`)
+- `voice_ar` (optional, used by `dual_voice` mixed mode)
+- `voice_en` (optional, used by `dual_voice` mixed mode)
+- `rate` (optional string in format like `+0%`, `+10%`, `-15%`)
+- `mixed_mode` (optional: `single_voice` or `dual_voice`, default from `TTS_MIXED_MODE_DEFAULT`)
+
+Response:
+- `200` with MP3 bytes (`Content-Type: audio/mpeg`)
+- `Content-Disposition: inline; filename="speech.mp3"`
+
+Mixed-language behavior:
+- Server detects script profile: `arabic`, `english`, or `mixed`.
+- In `mixed_mode=dual_voice`, mixed text is segmented into Arabic/English runs, neutral chars are attached to nearest run, then per-run TTS is stitched into one MP3 with short silence boundaries.
+- If `voice` is omitted for single-voice flow:
+  - `arabic` -> `TTS_DEFAULT_VOICE_AR`
+  - `english` -> `TTS_DEFAULT_VOICE_EN`
+  - `mixed` -> `TTS_DEFAULT_VOICE_MIXED` (default Arabic-capable voice)
+- Text is preserved as-is (no transliteration/splitting).
+
+Common errors:
+- `400` invalid payload (empty text, invalid rate, over max chars).
+- `401` unauthenticated.
+- `503` TTS provider failure or timeout.
+
 ## Medicine History (`/api/medicine-history/`)
 
 JWT-protected, user-scoped:

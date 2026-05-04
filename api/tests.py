@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import io
 from datetime import date
-from unittest.mock import patch
+from unittest.mock import AsyncMock, patch
 
 from django.contrib.auth import get_user_model
 from django.db import connection
@@ -96,6 +96,127 @@ class OCRSearchTests(APITestCase):
         self.assertEqual(resp.status_code, status.HTTP_200_OK)
         self.assertEqual(resp.data["match_confidence_tier"], "low")
         self.assertEqual(resp.data["action_hint"], "retake_photo")
+
+
+class TextToSpeechTests(APITestCase):
+    URL = "/api/tts/speak/"
+
+    def setUp(self):
+        self.user = make_user()
+
+    def test_tts_requires_auth(self):
+        resp = self.client.post(self.URL, {"text": "hello"}, format="json")
+        self.assertEqual(resp.status_code, status.HTTP_401_UNAUTHORIZED)
+
+    def test_tts_rejects_empty_text(self):
+        resp = self.client.post(self.URL, {"text": "   "}, format="json", **auth_header(self.user))
+        self.assertEqual(resp.status_code, status.HTTP_400_BAD_REQUEST)
+
+    def test_tts_rejects_too_long_text(self):
+        with self.settings(TTS_MAX_CHARS=10):
+            resp = self.client.post(self.URL, {"text": "a" * 20}, format="json", **auth_header(self.user))
+        self.assertEqual(resp.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertIn("text", resp.data)
+
+    @patch("api.views._generate_tts_mp3_bytes", new_callable=AsyncMock)
+    def test_tts_english_text_returns_mp3(self, mock_generate):
+        mock_generate.return_value = b"ID3-en"
+        resp = self.client.post(self.URL, {"text": "Panadol 500 mg after meal"}, format="json", **auth_header(self.user))
+        self.assertEqual(resp.status_code, status.HTTP_200_OK)
+        self.assertEqual(resp["Content-Type"], "audio/mpeg")
+        self.assertEqual(resp.content, b"ID3-en")
+
+    @patch("api.views._generate_tts_mp3_bytes", new_callable=AsyncMock)
+    def test_tts_arabic_text_returns_mp3(self, mock_generate):
+        mock_generate.return_value = b"ID3-ar"
+        resp = self.client.post(self.URL, {"text": "بانادول ٥٠٠ مجم بعد الأكل"}, format="json", **auth_header(self.user))
+        self.assertEqual(resp.status_code, status.HTTP_200_OK)
+        self.assertEqual(resp["Content-Type"], "audio/mpeg")
+        self.assertEqual(resp.content, b"ID3-ar")
+
+    @patch("api.views._stitch_mp3_segments_with_silence")
+    @patch("api.views._generate_tts_mp3_bytes", new_callable=AsyncMock)
+    def test_tts_mixed_text_defaults_to_dual_voice(self, mock_generate, mock_stitch):
+        mock_generate.return_value = b"seg"
+        mock_stitch.return_value = b"ID3-mixed"
+        with self.settings(TTS_DEFAULT_VOICE_AR="ar-EG-SalmaNeural", TTS_DEFAULT_VOICE_EN="en-US-JennyNeural"):
+            resp = self.client.post(
+                self.URL,
+                {"text": "Panadol 500 mg مرتين يوميا"},
+                format="json",
+                **auth_header(self.user),
+            )
+        self.assertEqual(resp.status_code, status.HTTP_200_OK)
+        self.assertGreaterEqual(mock_generate.await_count, 2)
+        calls = [call.kwargs["voice"] for call in mock_generate.await_args_list]
+        self.assertIn("ar-EG-SalmaNeural", calls)
+        self.assertIn("en-US-JennyNeural", calls)
+        mock_stitch.assert_called_once()
+
+    @patch("api.views._generate_tts_mp3_bytes", new_callable=AsyncMock)
+    def test_tts_voice_override_is_used(self, mock_generate):
+        mock_generate.return_value = b"ID3-override"
+        resp = self.client.post(
+            self.URL,
+            {"text": "Panadol 500 mg مرتين يوميا", "voice": "en-US-JennyNeural"},
+            format="json",
+            **auth_header(self.user),
+        )
+        self.assertEqual(resp.status_code, status.HTTP_200_OK)
+        kwargs = mock_generate.call_args.kwargs
+        self.assertEqual(kwargs["voice"], "en-US-JennyNeural")
+
+    @patch("api.views._stitch_mp3_segments_with_silence")
+    @patch("api.views._generate_tts_mp3_bytes", new_callable=AsyncMock)
+    def test_tts_dual_voice_overrides_are_used(self, mock_generate, mock_stitch):
+        mock_generate.return_value = b"seg"
+        mock_stitch.return_value = b"stitched"
+        resp = self.client.post(
+            self.URL,
+            {
+                "text": "Panadol 500 mg مرتين يوميا",
+                "mixed_mode": "dual_voice",
+                "voice_ar": "ar-EG-SalmaNeural",
+                "voice_en": "en-US-JennyNeural",
+            },
+            format="json",
+            **auth_header(self.user),
+        )
+        self.assertEqual(resp.status_code, status.HTTP_200_OK)
+        calls = [call.kwargs["voice"] for call in mock_generate.await_args_list]
+        self.assertIn("ar-EG-SalmaNeural", calls)
+        self.assertIn("en-US-JennyNeural", calls)
+
+    @patch("api.views._generate_tts_mp3_bytes", new_callable=AsyncMock)
+    def test_tts_invalid_mixed_mode_rejected(self, mock_generate):
+        resp = self.client.post(
+            self.URL,
+            {"text": "hello", "mixed_mode": "bad_mode"},
+            format="json",
+            **auth_header(self.user),
+        )
+        self.assertEqual(resp.status_code, status.HTTP_400_BAD_REQUEST)
+        mock_generate.assert_not_called()
+
+    def test_tts_rejects_segment_overflow(self):
+        mixed_text = " ".join(["A ب"] * 20)
+        with self.settings(TTS_MAX_SEGMENTS=2):
+            resp = self.client.post(self.URL, {"text": mixed_text}, format="json", **auth_header(self.user))
+        self.assertEqual(resp.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertIn("text", resp.data)
+
+    @patch("api.views._generate_tts_mp3_bytes", new_callable=AsyncMock, side_effect=RuntimeError("provider down"))
+    def test_tts_provider_failure_returns_503(self, _mock_generate):
+        resp = self.client.post(self.URL, {"text": "hello"}, format="json", **auth_header(self.user))
+        self.assertEqual(resp.status_code, status.HTTP_503_SERVICE_UNAVAILABLE)
+
+
+class TextToSpeechSegmentationTests(APITestCase):
+    def test_neutral_tokens_attach_to_nearest_language(self):
+        segments = api_views._resolve_mixed_segments("خذ Panadol 500 mg بعد الأكل")
+        self.assertGreaterEqual(len(segments), 2)
+        self.assertEqual(segments[0]["language"], "arabic")
+        self.assertEqual(segments[1]["language"], "english")
 
 
 class MedicineHistoryModelTests(APITestCase):

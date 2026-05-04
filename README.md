@@ -76,6 +76,16 @@ curl -X POST "http://127.0.0.1:8000/api/uploads/ocr-search/" \
 
 For exact response contract and error semantics, see [docs/api-contracts.md](docs/api-contracts.md#ocr-search).
 
+## Text-to-Speech Example
+
+```bash
+curl -X POST "http://127.0.0.1:8000/api/tts/speak/" \
+  -H "Authorization: Bearer <access_token>" \
+  -H "Content-Type: application/json" \
+  -d '{"text":"Panadol 500 mg مرتين يوميا بعد الأكل","rate":"+0%"}' \
+  --output speech.mp3
+```
+
 ## Additional Assets
 
 - Team quickstart (English): [TEAM_QUICKSTART_EN.md](TEAM_QUICKSTART_EN.md)

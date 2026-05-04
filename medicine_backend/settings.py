@@ -193,3 +193,13 @@ SEARCH_ALIAS_BOOST_WEIGHT = env.float("SEARCH_ALIAS_BOOST_WEIGHT", default=0.10)
 SEARCH_INGREDIENT_BOOST_WEIGHT = env.float("SEARCH_INGREDIENT_BOOST_WEIGHT", default=0.10)
 SEARCH_COVERAGE_BOOST_WEIGHT = env.float("SEARCH_COVERAGE_BOOST_WEIGHT", default=0.06)
 SEARCH_DRUG_CLASS_PENALTY_WEIGHT = env.float("SEARCH_DRUG_CLASS_PENALTY_WEIGHT", default=0.05)
+
+# ── Text-to-Speech settings ───────────────────────────────────────────────────
+TTS_DEFAULT_VOICE_EN = env("TTS_DEFAULT_VOICE_EN", default="en-US-JennyNeural")
+TTS_DEFAULT_VOICE_AR = env("TTS_DEFAULT_VOICE_AR", default="ar-EG-SalmaNeural")
+TTS_DEFAULT_VOICE_MIXED = env("TTS_DEFAULT_VOICE_MIXED", default="ar-EG-SalmaNeural")
+TTS_MAX_CHARS = env.int("TTS_MAX_CHARS", default=2000)
+TTS_TIMEOUT_SECONDS = env.float("TTS_TIMEOUT_SECONDS", default=30.0)
+TTS_MIXED_MODE_DEFAULT = env("TTS_MIXED_MODE_DEFAULT", default="dual_voice")
+TTS_STITCH_SILENCE_MS = env.int("TTS_STITCH_SILENCE_MS", default=80)
+TTS_MAX_SEGMENTS = env.int("TTS_MAX_SEGMENTS", default=24)

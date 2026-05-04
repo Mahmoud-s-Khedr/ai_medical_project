@@ -11,3 +11,4 @@ rapidfuzz
 easyocr
 pytesseract
 ultralytics
+edge-tts

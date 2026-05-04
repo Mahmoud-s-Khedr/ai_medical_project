@@ -1,9 +1,12 @@
 from __future__ import annotations
 
+import asyncio
 import io
 import logging
 import os
 import re
+import subprocess
+import tempfile
 import time
 from time import perf_counter
 from typing import Any
@@ -11,11 +14,13 @@ from typing import Any
 import numpy as np
 from django.conf import settings
 from django.db.models import Case, IntegerField, Q, When
+from django.http import HttpResponse
 from PIL import Image
 from rest_framework import status, viewsets
 from rest_framework.decorators import action
 from rest_framework.parsers import FormParser, MultiPartParser
 from rest_framework.permissions import IsAuthenticated
+from drf_spectacular.utils import OpenApiResponse, extend_schema
 
 from .permissions import IsAdminOrReadOnly
 from rest_framework.response import Response
@@ -25,9 +30,11 @@ from ai.ocr_pipeline import try_rotations_and_ocr
 
 from .models import Medicine, MedicineHistoryEntry
 from .search import search_medicines_ranked
-from .serializers import MedicineHistoryEntrySerializer, MedicineSerializer
+from .serializers import MedicineHistoryEntrySerializer, MedicineSerializer, TextToSpeechRequestSerializer
 
 logger = logging.getLogger(__name__)
+_ARABIC_CHAR_RE = re.compile(r"[\u0600-\u06FF\u0750-\u077F\u08A0-\u08FF]")
+_ENGLISH_CHAR_RE = re.compile(r"[A-Za-z]")
 
 _MEDICINE_CACHE: dict[str, Any] = {
     "loaded_at": 0.0,
@@ -306,6 +313,162 @@ def _confidence_tier(ocr_confidence: float, top_score: float) -> str:
 
 def _response_action(tier: str) -> str:
     return "retake_photo" if tier == "low" else "show_results"
+
+
+def _detect_script_profile(text: str) -> str:
+    has_arabic = bool(_ARABIC_CHAR_RE.search(text))
+    has_english = bool(_ENGLISH_CHAR_RE.search(text))
+    if has_arabic and has_english:
+        return "mixed"
+    if has_arabic:
+        return "arabic"
+    return "english"
+
+
+async def _generate_tts_mp3_bytes(*, text: str, voice: str, rate: str | None = None) -> bytes:
+    try:
+        import edge_tts
+    except ImportError as exc:
+        raise RuntimeError("TTS provider dependency is not installed.") from exc
+
+    communicate = edge_tts.Communicate(text=text, voice=voice, rate=rate or "+0%")
+    chunks: list[bytes] = []
+    async for chunk in communicate.stream():
+        if chunk.get("type") == "audio":
+            data = chunk.get("data")
+            if isinstance(data, (bytes, bytearray)):
+                chunks.append(bytes(data))
+    return b"".join(chunks)
+
+
+def _char_script(ch: str) -> str:
+    if _ARABIC_CHAR_RE.match(ch):
+        return "arabic"
+    if _ENGLISH_CHAR_RE.match(ch):
+        return "english"
+    return "neutral"
+
+
+def _script_runs(text: str) -> list[dict[str, str]]:
+    if not text:
+        return []
+    runs: list[dict[str, str]] = []
+    current_script = _char_script(text[0])
+    current_chars = [text[0]]
+    for ch in text[1:]:
+        script = _char_script(ch)
+        if script == current_script:
+            current_chars.append(ch)
+            continue
+        runs.append({"script": current_script, "text": "".join(current_chars)})
+        current_script = script
+        current_chars = [ch]
+    runs.append({"script": current_script, "text": "".join(current_chars)})
+    return runs
+
+
+def _resolve_mixed_segments(text: str) -> list[dict[str, str]]:
+    runs = _script_runs(text)
+    if not runs:
+        return []
+
+    language_indexes = [idx for idx, run in enumerate(runs) if run["script"] in {"arabic", "english"}]
+    if not language_indexes:
+        return [{"language": "english", "text": text}]
+
+    resolved: list[dict[str, str]] = []
+    for idx, run in enumerate(runs):
+        script = run["script"]
+        if script in {"arabic", "english"}:
+            resolved.append({"language": script, "text": run["text"]})
+            continue
+
+        prev_lang = None
+        for j in range(idx - 1, -1, -1):
+            if runs[j]["script"] in {"arabic", "english"}:
+                prev_lang = runs[j]["script"]
+                break
+        next_lang = None
+        for j in range(idx + 1, len(runs)):
+            if runs[j]["script"] in {"arabic", "english"}:
+                next_lang = runs[j]["script"]
+                break
+        lang = prev_lang or next_lang or "english"
+        resolved.append({"language": lang, "text": run["text"]})
+
+    merged: list[dict[str, str]] = []
+    for run in resolved:
+        if merged and merged[-1]["language"] == run["language"]:
+            merged[-1]["text"] += run["text"]
+        else:
+            merged.append(run)
+    return [run for run in merged if run["text"].strip()]
+
+
+def _stitch_mp3_segments_with_silence(segments: list[bytes], silence_ms: int) -> bytes:
+    if not segments:
+        return b""
+    if len(segments) == 1:
+        return segments[0]
+
+    with tempfile.TemporaryDirectory(prefix="tts-stitch-") as tmp_dir:
+        silence_path = os.path.join(tmp_dir, "silence.mp3")
+        subprocess.run(
+            [
+                "ffmpeg",
+                "-y",
+                "-f",
+                "lavfi",
+                "-i",
+                f"anullsrc=r=24000:cl=mono",
+                "-t",
+                f"{max(0, silence_ms) / 1000.0}",
+                "-q:a",
+                "9",
+                "-acodec",
+                "libmp3lame",
+                silence_path,
+            ],
+            check=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+        )
+
+        segment_paths: list[str] = []
+        for idx, payload in enumerate(segments):
+            seg_path = os.path.join(tmp_dir, f"segment_{idx}.mp3")
+            with open(seg_path, "wb") as fh:
+                fh.write(payload)
+            segment_paths.append(seg_path)
+
+        concat_list_path = os.path.join(tmp_dir, "concat.txt")
+        with open(concat_list_path, "w", encoding="utf-8") as fh:
+            for idx, seg_path in enumerate(segment_paths):
+                fh.write(f"file '{seg_path}'\n")
+                if idx < len(segment_paths) - 1 and silence_ms > 0:
+                    fh.write(f"file '{silence_path}'\n")
+
+        output_path = os.path.join(tmp_dir, "stitched.mp3")
+        subprocess.run(
+            [
+                "ffmpeg",
+                "-y",
+                "-f",
+                "concat",
+                "-safe",
+                "0",
+                "-i",
+                concat_list_path,
+                "-c",
+                "copy",
+                output_path,
+            ],
+            check=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+        )
+        with open(output_path, "rb") as fh:
+            return fh.read()
 
 
 class MedicineViewSet(viewsets.ModelViewSet):
@@ -651,3 +814,121 @@ class OCRMedicineSearchView(APIView):
             },
             status=status.HTTP_200_OK,
         )
+
+
+class TextToSpeechView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    @extend_schema(
+        summary="Convert text to speech",
+        description=(
+            "Generates MP3 audio from user text. Supports Arabic, English, and mixed-script input. "
+            "When `voice` is not supplied, the server picks a default voice by detected script profile."
+        ),
+        request=TextToSpeechRequestSerializer,
+        responses={
+            200: OpenApiResponse(description="MP3 audio bytes with `audio/mpeg` content type."),
+            400: OpenApiResponse(description="Invalid request payload."),
+            401: OpenApiResponse(description="Missing or invalid JWT."),
+            503: OpenApiResponse(description="TTS provider error or timeout."),
+        },
+    )
+    def post(self, request, *args, **kwargs):
+        serializer = TextToSpeechRequestSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+
+        text = serializer.validated_data["text"]
+        voice = serializer.validated_data.get("voice")
+        voice_ar = serializer.validated_data.get("voice_ar")
+        voice_en = serializer.validated_data.get("voice_en")
+        rate = serializer.validated_data.get("rate")
+        mixed_mode = serializer.validated_data.get("mixed_mode")
+        max_chars = int(getattr(settings, "TTS_MAX_CHARS", 2000))
+
+        if len(text) > max_chars:
+            return Response(
+                {"text": [f"Text length must be <= {max_chars} characters."]},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        profile = _detect_script_profile(text)
+        if mixed_mode is None:
+            if voice:
+                mixed_mode = "single_voice"
+            else:
+                mixed_mode = str(getattr(settings, "TTS_MIXED_MODE_DEFAULT", "dual_voice"))
+        if mixed_mode not in {"single_voice", "dual_voice"}:
+            return Response(
+                {"mixed_mode": ["Invalid mixed_mode. Use 'single_voice' or 'dual_voice'."]},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        default_ar = str(getattr(settings, "TTS_DEFAULT_VOICE_AR", "ar-EG-SalmaNeural"))
+        default_en = str(getattr(settings, "TTS_DEFAULT_VOICE_EN", "en-US-JennyNeural"))
+        default_mixed = str(getattr(settings, "TTS_DEFAULT_VOICE_MIXED", default_ar))
+
+        if not voice:
+            if profile == "arabic":
+                voice = default_ar
+            elif profile == "mixed":
+                voice = default_mixed
+            else:
+                voice = default_en
+
+        try:
+            timeout_seconds = float(getattr(settings, "TTS_TIMEOUT_SECONDS", 30))
+            if profile == "mixed" and mixed_mode == "dual_voice":
+                segments = _resolve_mixed_segments(text)
+                max_segments = int(getattr(settings, "TTS_MAX_SEGMENTS", 24))
+                if len(segments) > max_segments:
+                    return Response(
+                        {"text": [f"Input produced too many segments ({len(segments)} > {max_segments})."]},
+                        status=status.HTTP_400_BAD_REQUEST,
+                    )
+                voice_ar_final = voice_ar or default_ar
+                voice_en_final = voice_en or default_en
+
+                async def _dual_synth() -> list[bytes]:
+                    chunks: list[bytes] = []
+                    for segment in segments:
+                        segment_voice = voice_ar_final if segment["language"] == "arabic" else voice_en_final
+                        payload = await _generate_tts_mp3_bytes(
+                            text=segment["text"],
+                            voice=segment_voice,
+                            rate=rate,
+                        )
+                        chunks.append(payload)
+                    return chunks
+
+                segment_audio = asyncio.run(
+                    asyncio.wait_for(
+                        _dual_synth(),
+                        timeout=timeout_seconds,
+                    )
+                )
+                silence_ms = int(getattr(settings, "TTS_STITCH_SILENCE_MS", 80))
+                audio_bytes = _stitch_mp3_segments_with_silence(segment_audio, silence_ms=silence_ms)
+            else:
+                audio_bytes = asyncio.run(
+                    asyncio.wait_for(
+                        _generate_tts_mp3_bytes(text=text, voice=voice, rate=rate),
+                        timeout=timeout_seconds,
+                    )
+                )
+        except Exception:
+            logger.exception("TTS generation failed user_id=%s", request.user.id)
+            return Response(
+                {"detail": "Text-to-speech service is temporarily unavailable."},
+                status=status.HTTP_503_SERVICE_UNAVAILABLE,
+            )
+
+        if not audio_bytes:
+            return Response(
+                {"detail": "Text-to-speech service returned empty audio."},
+                status=status.HTTP_503_SERVICE_UNAVAILABLE,
+            )
+
+        response = HttpResponse(audio_bytes, content_type="audio/mpeg")
+        response["Content-Disposition"] = 'inline; filename="speech.mp3"'
+        response["Cache-Control"] = "no-store"
+        return response

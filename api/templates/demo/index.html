@@ -32,6 +32,7 @@
         <button class="rail-btn" data-tab="auth">Auth</button>
         <button class="rail-btn" data-tab="security">Account Security</button>
         <button class="rail-btn" data-tab="ocr">OCR</button>
+        <button class="rail-btn" data-tab="tts">TTS</button>
         <button class="rail-btn" data-tab="medicines">Medicines</button>
         <button class="rail-btn" data-tab="history">Medicine History</button>
         <button class="rail-btn" data-tab="integrations">Integrations</button>
@@ -48,6 +49,7 @@
           </div>
           <div class="action-bar">
             <button class="btn secondary" data-jump="ocr" type="button">Scan Medicine</button>
+            <button class="btn secondary" data-jump="tts" type="button">Speak Text</button>
             <button class="btn secondary" data-jump="integrations" type="button">Integration Flow</button>
           </div>
         </header>
@@ -66,8 +68,12 @@
               <h3>3. Track Usage</h3>
               <p>Manage medicine history timeline entries.</p>
             </button>
+            <button class="card task" data-jump="tts" type="button">
+              <h3>4. Speak Text</h3>
+              <p>Generate Arabic/English medicine-safe audio output.</p>
+            </button>
             <button class="card task" data-jump="integrations" type="button">
-              <h3>4. Integrate</h3>
+              <h3>5. Integrate</h3>
               <p>Create app/key, process access requests, and simulate external access.</p>
             </button>
           </div>
@@ -203,6 +209,49 @@
             <article class="card">
               <h3>Details & Interactions</h3>
               <div id="medicineDetailPanel" class="empty">Select a medicine to inspect details.</div>
+            </article>
+          </div>
+        </section>
+
+        <section class="tab" id="tab-tts">
+          <div class="grid split-2">
+            <form id="ttsForm" class="card form">
+              <h3>Generate Speech</h3>
+              <label>Text
+                <textarea name="text" id="ttsTextInput" required placeholder="Panadol 500 mg مرتين يوميا بعد الأكل"></textarea>
+              </label>
+              <div class="drop-meta">Supports Arabic, English, and mixed text. Backend max: ~2000 chars.</div>
+              <div class="chip" id="ttsCharCountChip">0 chars</div>
+              <div class="grid split-2">
+                <label>Rate <input name="rate" value="+0%" placeholder="+0%" /></label>
+                <label>Mixed Mode
+                  <select name="mixed_mode">
+                    <option value="dual_voice" selected>dual_voice</option>
+                    <option value="single_voice">single_voice</option>
+                  </select>
+                </label>
+              </div>
+              <label>Voice (single_voice or explicit override)
+                <input name="voice" placeholder="en-US-JennyNeural" />
+              </label>
+              <div class="grid split-2">
+                <label>Arabic Voice (dual mode)
+                  <input name="voice_ar" placeholder="ar-EG-SalmaNeural" />
+                </label>
+                <label>English Voice (dual mode)
+                  <input name="voice_en" placeholder="en-US-JennyNeural" />
+                </label>
+              </div>
+              <button class="btn" type="submit">Generate Audio</button>
+            </form>
+
+            <article class="card">
+              <h3>TTS Output</h3>
+              <div id="ttsOutput" class="empty">No audio generated yet.</div>
+              <details>
+                <summary>Developer details</summary>
+                <pre id="ttsDebugOutput" class="codeblock">No request yet.</pre>
+              </details>
             </article>
           </div>
         </section>

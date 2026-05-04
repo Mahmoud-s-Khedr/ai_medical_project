@@ -22,7 +22,7 @@ from .integration_views import (
     RevokeDeveloperApiKeyView,
     UserAccessRequestInboxView,
 )
-from .views import MedicineHistoryViewSet, MedicineViewSet, OCRMedicineSearchView
+from .views import MedicineHistoryViewSet, MedicineViewSet, OCRMedicineSearchView, TextToSpeechView
 
 router = DefaultRouter()
 router.register("medicines", MedicineViewSet, basename="medicine")
@@ -46,6 +46,7 @@ urlpatterns = [
     path("auth/", include(auth_urlpatterns)),
     path("", include(router.urls)),
     path("uploads/ocr-search/", OCRMedicineSearchView.as_view(), name="ocr-medicine-search"),
+    path("tts/speak/", TextToSpeechView.as_view(), name="tts-speak"),
     path("integrations/keys/<int:key_id>/revoke/", RevokeDeveloperApiKeyView.as_view(), name="integration-key-revoke"),
     path("integrations/access-requests/inbox/", UserAccessRequestInboxView.as_view(), name="integration-inbox"),
     path(

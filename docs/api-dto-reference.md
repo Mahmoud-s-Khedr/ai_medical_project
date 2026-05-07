@@ -622,6 +622,38 @@ Error Response DTO:
 - `413`: `{ "error": "Uploaded image exceeds size limit (...) bytes." }`.
 - `500`: `{ "error": "OCR processing failed. Please try again." }`.
 
+## Text-to-Speech Endpoint
+
+### `POST /api/tts/speak/`
+
+- Auth mode: `JWT`
+
+Request Body DTO:
+
+| field | type | required | notes |
+|---|---|---|---|
+| text | string | yes | trimmed + normalized; must be non-empty; max length `TTS_MAX_CHARS` |
+| voice | string | no | max 80 chars; when provided, forces `mixed_mode=single_voice` |
+| voice_ar | string | no | max 80 chars; used for Arabic runs when `mixed_mode=dual_voice` |
+| voice_en | string | no | max 80 chars; used for English runs when `mixed_mode=dual_voice` |
+| rate | string | no | format: `[+-]\d{1,3}%` (e.g., `+10%`, `-5%`) |
+| mixed_mode | enum(`single_voice`,`dual_voice`) | no | default from `TTS_MIXED_MODE_DEFAULT` |
+
+Query DTO: none  
+Path DTO: none
+
+Success Response DTO:
+- `200`: MP3 audio bytes (`Content-Type: audio/mpeg`)
+
+Response Headers:
+- `Content-Disposition: inline; filename="speech.mp3"`
+- `Cache-Control: no-store`
+
+Error Response DTO:
+- `400`: validation object (e.g., invalid `rate`, `mixed_mode`, text too long, or too many mixed segments).
+- `401`: missing/invalid JWT.
+- `503`: `{ "detail": "Text-to-speech service is temporarily unavailable." }` or `{ "detail": "Text-to-speech service returned empty audio." }`.
+
 ## Medicine History Endpoints
 
 ### `GET /api/medicine-history/`
@@ -1070,6 +1102,7 @@ All actively routed `/api/` endpoints from `medicine_backend/urls.py` and `api/u
 - `/api/medicines/*` (+ `/interactions/`)
 - `/api/medicine-history/*`
 - `/api/uploads/ocr-search/`
+- `/api/tts/speak/`
 - `/api/integrations/apps/*`
 - `/api/integrations/keys/*` (+ revoke)
 - `/api/integrations/access-requests/*`

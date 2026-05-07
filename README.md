@@ -53,6 +53,30 @@ python manage.py runserver 127.0.0.1:8000
 
 Base URL: `http://127.0.0.1:8000`
 
+## Docker (Compose)
+
+Run with Docker Compose (build + start):
+
+```bash
+docker compose up --build -d
+```
+
+Watch service logs:
+
+```bash
+docker compose logs -f web
+```
+
+Stop services:
+
+```bash
+docker compose down
+```
+
+Health check:
+
+- `http://<host>:8000/demo/health/`
+
 ## API and Demo Entrypoints
 
 - `GET /` -> redirect to `/api/docs/`

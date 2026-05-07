@@ -1,0 +1,13 @@
+.git
+.gitignore
+.venv
+.pytest_cache
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+*.sqlite3
+tmp/
+.DS_Store
+*.ipynb
+eval_set/

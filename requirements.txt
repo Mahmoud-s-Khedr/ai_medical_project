@@ -12,3 +12,4 @@ easyocr
 pytesseract
 ultralytics
 edge-tts
+gunicorn

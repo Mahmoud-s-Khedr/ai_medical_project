@@ -1,0 +1,19 @@
+services:
+  web:
+    build: .
+    container_name: medicine-ocr-web
+    restart: unless-stopped
+    env_file:
+      - .env
+    environment:
+      DEBUG: "ture"
+      ALLOWED_HOSTS: "localhost,127.0.0.1,46.101.108.29"
+      DATABASE_URL: "sqlite:////app/data/db.sqlite3"
+    ports:
+      - "8000:8000"
+    volumes:
+      - sqlite_data:/app/data
+
+volumes:
+  sqlite_data:
+  

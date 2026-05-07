@@ -4,6 +4,7 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 PID_FILE="$PROJECT_ROOT/tmp/runserver.pid"
+TUNNEL_PID_FILE="$PROJECT_ROOT/tmp/localtunnel.pid"
 PORT="8000"
 
 stop_pid() {
@@ -39,6 +40,7 @@ stop_pid() {
 }
 
 stopped=0
+tunnel_stopped=0
 
 if [[ -f "$PID_FILE" ]]; then
   pid_from_file="$(cat "$PID_FILE" 2>/dev/null || true)"
@@ -48,6 +50,16 @@ if [[ -f "$PID_FILE" ]]; then
     echo "PID file exists but process is not running: $pid_from_file"
   fi
   rm -f "$PID_FILE"
+fi
+
+if [[ -f "$TUNNEL_PID_FILE" ]]; then
+  tunnel_pid_from_file="$(cat "$TUNNEL_PID_FILE" 2>/dev/null || true)"
+  if stop_pid "$tunnel_pid_from_file"; then
+    tunnel_stopped=1
+  else
+    echo "Tunnel PID file exists but process is not running: $tunnel_pid_from_file"
+  fi
+  rm -f "$TUNNEL_PID_FILE"
 fi
 
 if [[ "$stopped" -eq 0 ]]; then
@@ -67,7 +79,16 @@ if [[ "$stopped" -eq 0 ]]; then
 fi
 
 if [[ "$stopped" -eq 1 ]]; then
-  echo "Done."
+  if [[ "$tunnel_stopped" -eq 1 ]]; then
+    echo "Django server and tunnel stopped."
+  else
+    echo "Django server stopped."
+  fi
+  exit 0
+fi
+
+if [[ "$tunnel_stopped" -eq 1 ]]; then
+  echo "LocalTunnel stopped."
   exit 0
 fi
 

@@ -10,8 +10,12 @@ PIP_BIN="${PIP_BIN:-$VENV_DIR/bin/pip}"
 PID_DIR="$PROJECT_ROOT/tmp"
 PID_FILE="$PID_DIR/runserver.pid"
 LOG_FILE="$PID_DIR/runserver.log"
+TUNNEL_PID_FILE="$PID_DIR/localtunnel.pid"
+TUNNEL_LOG_FILE="$PID_DIR/localtunnel.log"
 HOST="${HOST:-127.0.0.1}"
 PORT="${PORT:-8000}"
+ENABLE_TUNNEL="${ENABLE_TUNNEL:-false}"
+TUNNEL_SUBDOMAIN="${TUNNEL_SUBDOMAIN:-}"
 ENV_FILE="$PROJECT_ROOT/.env"
 ENV_EXAMPLE_FILE="$PROJECT_ROOT/.env.example"
 REQ_FILE="$PROJECT_ROOT/requirements.txt"
@@ -66,6 +70,9 @@ mkdir -p "$PID_DIR"
 step "Checking required system commands..."
 require_cmd python3
 require_cmd curl
+if [[ "$ENABLE_TUNNEL" == "true" ]]; then
+  require_cmd npx
+fi
 
 if [[ ! -d "$VENV_DIR" ]]; then
   step "Virtualenv not found. Creating at $VENV_DIR ..."
@@ -113,6 +120,17 @@ if [[ -f "$PID_FILE" ]]; then
   rm -f "$PID_FILE"
 fi
 
+if [[ -f "$TUNNEL_PID_FILE" ]]; then
+  existing_tunnel_pid="$(cat "$TUNNEL_PID_FILE" 2>/dev/null || true)"
+  if [[ -n "$existing_tunnel_pid" ]] && kill -0 "$existing_tunnel_pid" 2>/dev/null; then
+    step "LocalTunnel already running with PID $existing_tunnel_pid"
+    step "Use scripts/stop_app.sh to stop it first."
+    exit 0
+  fi
+  step "Removing stale tunnel PID file: $TUNNEL_PID_FILE"
+  rm -f "$TUNNEL_PID_FILE"
+fi
+
 step "Applying database migrations ..."
 "$PYTHON_BIN" "$PROJECT_ROOT/manage.py" migrate --noinput || fail "Migration failed"
 
@@ -149,4 +167,32 @@ else
   fi
   rm -f "$PID_FILE"
   exit 1
+fi
+
+if [[ "$ENABLE_TUNNEL" == "true" ]]; then
+  step "Starting LocalTunnel for port $PORT ..."
+  tunnel_cmd=(npx localtunnel --port "$PORT")
+  if [[ -n "$TUNNEL_SUBDOMAIN" ]]; then
+    tunnel_cmd+=(--subdomain "$TUNNEL_SUBDOMAIN")
+  fi
+
+  nohup "${tunnel_cmd[@]}" > "$TUNNEL_LOG_FILE" 2>&1 &
+  tunnel_pid=$!
+  echo "$tunnel_pid" > "$TUNNEL_PID_FILE"
+  sleep 2
+
+  if kill -0 "$tunnel_pid" 2>/dev/null; then
+    public_url="$(grep -Eo 'https://[a-zA-Z0-9.-]+\.loca\.lt' "$TUNNEL_LOG_FILE" | head -n 1 || true)"
+    step "LocalTunnel started with PID $tunnel_pid"
+    step "Tunnel log: $TUNNEL_LOG_FILE"
+    if [[ -n "$public_url" ]]; then
+      step "Public URL: $public_url"
+    else
+      step "Public URL will appear in: $TUNNEL_LOG_FILE"
+    fi
+  else
+    step "LocalTunnel failed to start. Check log: $TUNNEL_LOG_FILE"
+    rm -f "$TUNNEL_PID_FILE"
+    exit 1
+  fi
 fi

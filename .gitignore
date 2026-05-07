@@ -41,5 +41,4 @@ staticfiles/
 Thumbs.db
 
 # Local model weights/artifacts
-drug_detector.pt
 tmp/

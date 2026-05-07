@@ -7,7 +7,7 @@ Base prefix: `/api/`
 - `GET /` redirects (`302`) to `/api/docs/`.
 - `GET /demo/` serves demo app page.
 - `GET /demo/health/` serves demo health JSON.
-- `GET /api/schema/` OpenAPI schema.
+- `GET /api/schema/?format=json` OpenAPI schema in JSON format.
 - `GET /api/docs/` Swagger UI.
 - `GET /api/redoc/` ReDoc UI.
 

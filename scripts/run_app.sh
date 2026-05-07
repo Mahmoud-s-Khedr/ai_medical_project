@@ -16,6 +16,8 @@ HOST="${HOST:-127.0.0.1}"
 PORT="${PORT:-8000}"
 ENABLE_TUNNEL="${ENABLE_TUNNEL:-false}"
 TUNNEL_SUBDOMAIN="${TUNNEL_SUBDOMAIN:-}"
+EXPOSE_PUBLIC="${EXPOSE_PUBLIC:-false}"
+PUBLIC_IP="${PUBLIC_IP:-}"
 ENV_FILE="$PROJECT_ROOT/.env"
 ENV_EXAMPLE_FILE="$PROJECT_ROOT/.env.example"
 REQ_FILE="$PROJECT_ROOT/requirements.txt"
@@ -107,6 +109,17 @@ if [[ ! -f "$ENV_FILE" ]]; then
   ensure_env_key "DEBUG" "True"
   ensure_env_key "ALLOWED_HOSTS" "127.0.0.1,localhost"
   ensure_env_key "CORS_ALLOW_ALL_ORIGINS" "True"
+fi
+
+if [[ "$EXPOSE_PUBLIC" == "true" ]]; then
+  HOST="0.0.0.0"
+  if [[ -n "$PUBLIC_IP" ]]; then
+    step "Configuring ALLOWED_HOSTS for public IP: $PUBLIC_IP"
+    ensure_env_key "ALLOWED_HOSTS" "127.0.0.1,localhost,$PUBLIC_IP"
+  else
+    step "Configuring ALLOWED_HOSTS=* for public exposure"
+    ensure_env_key "ALLOWED_HOSTS" "*"
+  fi
 fi
 
 if [[ -f "$PID_FILE" ]]; then

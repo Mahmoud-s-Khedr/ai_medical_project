@@ -610,10 +610,25 @@
     const clearCameraBtn = $("#clearCameraBtn");
 
     function cameraSupportState() {
+      const isLocalhost = location.hostname === "localhost" || location.hostname === "127.0.0.1";
+      const isHttps = location.protocol === "https:";
+      const isSecureAllowed = isHttps || isLocalhost;
       const hasMediaDevices = !!navigator.mediaDevices;
       const hasGetUserMedia = !!navigator.mediaDevices?.getUserMedia;
-      const secureAllowed = window.isSecureContext || location.hostname === "localhost" || location.hostname === "127.0.0.1";
-      return { hasMediaDevices, hasGetUserMedia, secureAllowed };
+      return { isLocalhost, isHttps, isSecureAllowed, hasMediaDevices, hasGetUserMedia };
+    }
+
+    function cameraBlockedMessage(support) {
+      if (!support.isSecureAllowed) {
+        return {
+          status: "Camera unavailable on this URL: use https:// (or localhost).",
+          toast: "Live camera requires HTTPS on non-localhost URLs.",
+        };
+      }
+      return {
+        status: "Camera API is not supported in this browser.",
+        toast: "Camera API is unavailable in this browser context.",
+      };
     }
 
     function setCameraStatus(text) {
@@ -651,28 +666,21 @@
     });
 
     const cameraState = cameraSupportState();
-    if (!cameraState.secureAllowed || !cameraState.hasMediaDevices || !cameraState.hasGetUserMedia) {
+    if (!cameraState.isSecureAllowed || !cameraState.hasMediaDevices || !cameraState.hasGetUserMedia) {
       startCameraBtn.disabled = true;
       captureCameraBtn.disabled = true;
       stopCameraBtn.disabled = true;
       clearCameraBtn.disabled = true;
-      if (!cameraState.secureAllowed) {
-        setCameraStatus("Camera disabled: open over HTTPS (or localhost)");
-      } else {
-        setCameraStatus("Camera disabled: browser does not expose MediaDevices API");
-      }
+      const blocked = cameraBlockedMessage(cameraState);
+      setCameraStatus(blocked.status);
     }
 
     startCameraBtn.addEventListener("click", async () => {
       const support = cameraSupportState();
-      if (!support.secureAllowed) {
-        showToast("Camera requires HTTPS. Open this demo over https:// (or localhost).", "error");
-        setCameraStatus("Camera blocked: insecure origin (use HTTPS)");
-        return;
-      }
-      if (!support.hasMediaDevices || !support.hasGetUserMedia) {
-        showToast("Camera API is unavailable in this browser context.", "error");
-        setCameraStatus("Camera API unavailable in browser context");
+      if (!support.isSecureAllowed || !support.hasMediaDevices || !support.hasGetUserMedia) {
+        const blocked = cameraBlockedMessage(support);
+        showToast(blocked.toast, "error");
+        setCameraStatus(blocked.status);
         return;
       }
       try {

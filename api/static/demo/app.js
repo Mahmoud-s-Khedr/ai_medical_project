@@ -667,21 +667,29 @@
       const support = cameraSupportState();
       if (!support.secureAllowed) {
         showToast("Camera requires HTTPS. Open this demo over https:// (or localhost).", "error");
+        setCameraStatus("Camera blocked: insecure origin (use HTTPS)");
         return;
       }
       if (!support.hasMediaDevices || !support.hasGetUserMedia) {
         showToast("Camera API is unavailable in this browser context.", "error");
+        setCameraStatus("Camera API unavailable in browser context");
         return;
       }
       try {
         stopCamera();
+        setCameraStatus("Requesting camera permission...");
         const stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: { ideal: "environment" } }, audio: false });
+        if (!stream || stream.getVideoTracks().length === 0) {
+          throw new Error("No video track returned by browser.");
+        }
         state.cameraStream = stream;
         preview.srcObject = stream;
         preview.classList.remove("hidden");
+        await preview.play();
         setCameraStatus("Camera is live");
       } catch (error) {
-        setCameraStatus("Camera access denied");
+        const reason = error?.name ? `${error.name}${error?.message ? `: ${error.message}` : ""}` : (error?.message || "Unknown error");
+        setCameraStatus(`Camera failed: ${reason}`);
         showToast(error.message || "Could not access camera.", "error");
       }
     });

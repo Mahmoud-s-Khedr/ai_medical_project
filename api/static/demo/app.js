@@ -604,6 +604,17 @@
     const snapshot = $("#cameraSnapshot");
     const canvas = $("#cameraCanvas");
     const cameraStatus = $("#cameraStatus");
+    const startCameraBtn = $("#startCameraBtn");
+    const captureCameraBtn = $("#captureCameraBtn");
+    const stopCameraBtn = $("#stopCameraBtn");
+    const clearCameraBtn = $("#clearCameraBtn");
+
+    function cameraSupportState() {
+      const hasMediaDevices = !!navigator.mediaDevices;
+      const hasGetUserMedia = !!navigator.mediaDevices?.getUserMedia;
+      const secureAllowed = window.isSecureContext || location.hostname === "localhost" || location.hostname === "127.0.0.1";
+      return { hasMediaDevices, hasGetUserMedia, secureAllowed };
+    }
 
     function setCameraStatus(text) {
       cameraStatus.textContent = text;
@@ -639,9 +650,27 @@
       }
     });
 
-    $("#startCameraBtn").addEventListener("click", async () => {
-      if (!navigator.mediaDevices?.getUserMedia) {
-        showToast("Camera API is not supported in this browser.", "error");
+    const cameraState = cameraSupportState();
+    if (!cameraState.secureAllowed || !cameraState.hasMediaDevices || !cameraState.hasGetUserMedia) {
+      startCameraBtn.disabled = true;
+      captureCameraBtn.disabled = true;
+      stopCameraBtn.disabled = true;
+      clearCameraBtn.disabled = true;
+      if (!cameraState.secureAllowed) {
+        setCameraStatus("Camera disabled: open over HTTPS (or localhost)");
+      } else {
+        setCameraStatus("Camera disabled: browser does not expose MediaDevices API");
+      }
+    }
+
+    startCameraBtn.addEventListener("click", async () => {
+      const support = cameraSupportState();
+      if (!support.secureAllowed) {
+        showToast("Camera requires HTTPS. Open this demo over https:// (or localhost).", "error");
+        return;
+      }
+      if (!support.hasMediaDevices || !support.hasGetUserMedia) {
+        showToast("Camera API is unavailable in this browser context.", "error");
         return;
       }
       try {

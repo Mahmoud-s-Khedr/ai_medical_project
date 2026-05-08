@@ -1,7 +1,8 @@
 from __future__ import annotations
 
 from django.contrib import admin
-from django.urls import include, path
+from django.contrib.staticfiles.views import serve as static_serve
+from django.urls import include, path, re_path
 from django.views.generic import RedirectView
 from drf_spectacular.views import (
     SpectacularJSONAPIView,
@@ -20,4 +21,7 @@ urlpatterns = [
     path("api/schema/", SpectacularJSONAPIView.as_view(), name="schema"),
     path("api/docs/", SpectacularSwaggerView.as_view(url_name="schema"), name="swagger-ui"),
     path("api/redoc/", SpectacularRedocView.as_view(url_name="schema"), name="redoc"),
+    # Demo deploys run directly behind Gunicorn without nginx/whitenoise.
+    # Serve static assets explicitly so /demo/ can load CSS/JS in production too.
+    re_path(r"^static/(?P<path>.*)$", static_serve, {"insecure": True}),
 ]

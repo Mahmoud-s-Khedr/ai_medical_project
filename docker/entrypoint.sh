@@ -9,5 +9,11 @@ python manage.py seed_demo_data --profile "${SEED_PROFILE:-large}" --password "$
 
 exec gunicorn medicine_backend.wsgi:application \
   --bind 0.0.0.0:8000 \
-  --workers "${GUNICORN_WORKERS:-2}" \
-  --timeout "${GUNICORN_TIMEOUT:-120}"
+  --worker-class "${GUNICORN_WORKER_CLASS:-gthread}" \
+  --workers "${GUNICORN_WORKERS:-1}" \
+  --threads "${GUNICORN_THREADS:-2}" \
+  --timeout "${GUNICORN_TIMEOUT:-300}" \
+  --graceful-timeout "${GUNICORN_GRACEFUL_TIMEOUT:-60}" \
+  --keep-alive "${GUNICORN_KEEPALIVE:-5}" \
+  --max-requests "${GUNICORN_MAX_REQUESTS:-1000}" \
+  --max-requests-jitter "${GUNICORN_MAX_REQUESTS_JITTER:-100}"

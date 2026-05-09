@@ -97,6 +97,48 @@ class OCRSearchTests(APITestCase):
         self.assertEqual(resp.data["match_confidence_tier"], "low")
         self.assertEqual(resp.data["action_hint"], "retake_photo")
 
+    @patch("api.views._ocr_tokens_from_image")
+    def test_ocr_search_noisy_miconaz_tokens_return_match(self, mock_ocr):
+        make_medicine(
+            trade_name="Miconaz Oral Gel",
+            active_ingredient="Miconazole nitrate",
+            search_aliases="miconaz oral gel; miconazole oral gel; miconaz",
+        )
+        mock_ocr.return_value = (
+            api_views._prepare_ocr_candidates("Miconaz ora1 ge1"),
+            {"confidence": 0.9999, "angle": 0, "engine": "easyocr", "raw_texts": ["Miconaz ora1 ge1"]},
+        )
+        img_bytes = make_png_image_bytes()
+        with self.settings(OCR_RESULT_FLOOR=0.60, OCR_NEAR_MISS_RESULT_FLOOR=0.55, OCR_NEAR_MISS_OCR_CONFIDENCE=0.93):
+            resp = self.client.post(self.URL, {"image": img_bytes, "top_k": 5}, format="multipart", **auth_header(self.user))
+        self.assertEqual(resp.status_code, status.HTTP_200_OK)
+        names = [item["name"] for item in resp.data["matched_items"]]
+        self.assertIn("Miconaz Oral Gel", names)
+
+    @patch("api.views._ocr_tokens_from_image")
+    def test_ocr_debug_token_logs_when_enabled(self, mock_ocr):
+        mock_ocr.return_value = (
+            ["panadol", "extra"],
+            {
+                "confidence": 0.98,
+                "angle": 0,
+                "engine": "easyocr",
+                "crop_count_raw": 1,
+                "crop_count_used": 1,
+                "angles_used": 1,
+                "engine_calls": 1,
+                "raw_texts": ["Panadol Extra"],
+            },
+        )
+        img_bytes = make_png_image_bytes()
+        with self.settings(OCR_DEBUG_TOKENS_LOG=True):
+            with self.assertLogs("api.views", level="INFO") as captured:
+                resp = self.client.post(self.URL, {"image": img_bytes, "top_k": 3}, format="multipart", **auth_header(self.user))
+        self.assertEqual(resp.status_code, status.HTTP_200_OK)
+        joined = "\n".join(captured.output)
+        self.assertIn("ocr_debug_tokens_pre_search", joined)
+        self.assertIn("ocr_debug_tokens_post_search", joined)
+
 
 class TextToSpeechTests(APITestCase):
     URL = "/api/tts/speak/"
@@ -258,6 +300,28 @@ class MedicineHistoryModelTests(APITestCase):
         )
         with self.assertRaises(Exception):
             entry.full_clean()
+
+
+class OCRCandidatePrepTests(APITestCase):
+    def test_prepare_candidates_includes_phrase_tokens_and_bigrams(self):
+        with self.settings(OCR_MIN_TOKEN_LENGTH=3, OCR_MAX_BIGRAM_CANDIDATES=8):
+            candidates = api_views._prepare_ocr_candidates("Miconaz oral gel")
+        self.assertEqual(candidates[0], "miconaz oral gel")
+        self.assertIn("miconaz oral", candidates)
+        self.assertIn("oral gel", candidates)
+        self.assertIn("miconaz", candidates)
+
+    def test_prepare_candidates_normalizes_common_ocr_confusions(self):
+        with self.settings(OCR_ENABLE_CONFUSION_NORMALIZATION=True):
+            candidates = api_views._prepare_ocr_candidates("Miconaz ora1 ge1")
+        self.assertEqual(candidates[0], "miconaz oral gel")
+        self.assertIn("oral gel", candidates)
+
+    def test_prepare_candidates_handles_mixed_alnum_and_punctuation(self):
+        with self.settings(OCR_ENABLE_CONFUSION_NORMALIZATION=True):
+            candidates = api_views._prepare_ocr_candidates("M!conaz-0ral, ge1 20g")
+        self.assertIn("gel", candidates)
+        self.assertIn("mconazoral gel", candidates)
 
 
 class MedicineHistoryApiTests(APITestCase):

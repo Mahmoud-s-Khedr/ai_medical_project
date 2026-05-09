@@ -187,6 +187,7 @@ def _extract_crops(image_rgb: np.ndarray) -> tuple[list[np.ndarray], dict[str, i
 
 def _ocr_tokens_from_image(image_rgb: np.ndarray) -> tuple[list[str], dict[str, Any]]:
     candidates: list[str] = []
+    raw_texts: list[str] = []
     best_meta: dict[str, Any] = {
         "confidence": 0.0,
         "angle": 0,
@@ -195,6 +196,7 @@ def _ocr_tokens_from_image(image_rgb: np.ndarray) -> tuple[list[str], dict[str, 
         "crop_count_used": 0,
         "angles_used": 0,
         "engine_calls": 0,
+        "raw_texts": [],
     }
     angles = _ocr_angles()
     early_exit_confidence = float(getattr(settings, "OCR_EARLY_EXIT_CONFIDENCE", 0.90))
@@ -225,6 +227,7 @@ def _ocr_tokens_from_image(image_rgb: np.ndarray) -> tuple[list[str], dict[str, 
             best_meta = {"confidence": best_conf, "angle": angle, "engine": engine}
         if not best_text:
             continue
+        raw_texts.append(best_text)
 
         normalized_candidates = _prepare_ocr_candidates(best_text)
         if normalized_candidates:
@@ -233,6 +236,7 @@ def _ocr_tokens_from_image(image_rgb: np.ndarray) -> tuple[list[str], dict[str, 
     best_meta["crop_count_used"] = crop_meta["crop_count_used"]
     best_meta["angles_used"] = stats["angles_used"]
     best_meta["engine_calls"] = stats["engine_calls"]
+    best_meta["raw_texts"] = raw_texts
     return list(dict.fromkeys(candidates)), best_meta
 
 
@@ -247,16 +251,40 @@ def _normalize_ocr_token(token: str) -> str:
     return re.sub(r"\s+", " ", stripped).strip()
 
 
+def _normalize_ocr_confusions(token: str) -> str:
+    if not bool(getattr(settings, "OCR_ENABLE_CONFUSION_NORMALIZATION", True)):
+        return token
+    if not token:
+        return token
+    # Lightweight OCR confusion normalization for Latin medicine names.
+    mapped = token.translate(str.maketrans({"0": "o", "1": "l", "5": "s", "8": "b"}))
+    return re.sub(r"[^a-z0-9]+", "", mapped.lower())
+
+
 def _prepare_ocr_candidates(raw_text: str) -> list[str]:
     min_token_len = int(getattr(settings, "OCR_MIN_TOKEN_LENGTH", 3))
     stopwords = _normalized_stopwords()
-    normalized_tokens = [_normalize_ocr_token(chunk) for chunk in raw_text.split()]
-    normalized_tokens = [token for token in normalized_tokens if token]
-    if not normalized_tokens:
+    max_bigrams = max(0, int(getattr(settings, "OCR_MAX_BIGRAM_CANDIDATES", 8)))
+
+    rough_tokens = [_normalize_ocr_token(chunk) for chunk in raw_text.split()]
+    rough_tokens = [token for token in rough_tokens if token]
+    if not rough_tokens:
         return []
 
-    phrase_token = " ".join(normalized_tokens)
+    phrase_source = " ".join(rough_tokens)
+    phrase_chunks = [_normalize_ocr_confusions(chunk) for chunk in phrase_source.split()]
+    phrase_chunks = [chunk for chunk in phrase_chunks if chunk]
+    phrase_token = " ".join(phrase_chunks)
+    if not phrase_token:
+        return []
+
     filtered_tokens: list[str] = []
+    normalized_tokens: list[str] = []
+    for token in rough_tokens:
+        normalized = _normalize_ocr_confusions(token)
+        if not normalized:
+            continue
+        normalized_tokens.append(normalized)
     for token in normalized_tokens:
         if len(token) < min_token_len:
             continue
@@ -266,7 +294,22 @@ def _prepare_ocr_candidates(raw_text: str) -> list[str]:
             continue
         filtered_tokens.append(token)
 
-    return [phrase_token, *filtered_tokens]
+    bigrams: list[str] = []
+    for idx in range(len(normalized_tokens) - 1):
+        left = normalized_tokens[idx]
+        right = normalized_tokens[idx + 1]
+        if not left or not right:
+            continue
+        if left in stopwords or right in stopwords:
+            continue
+        bigram = f"{left} {right}"
+        if len(left) < 2 or len(right) < 2:
+            continue
+        bigrams.append(bigram)
+        if len(bigrams) >= max_bigrams:
+            break
+
+    return list(dict.fromkeys([phrase_token, *bigrams, *filtered_tokens]))
 
 
 def _load_medicine_index() -> list[tuple[int, str]]:
@@ -313,6 +356,10 @@ def _confidence_tier(ocr_confidence: float, top_score: float) -> str:
 
 def _response_action(tier: str) -> str:
     return "retake_photo" if tier == "low" else "show_results"
+
+
+def _ocr_debug_tokens_log_enabled() -> bool:
+    return bool(getattr(settings, "OCR_DEBUG_TOKENS_LOG", False))
 
 
 def _detect_script_profile(text: str) -> str:
@@ -643,6 +690,20 @@ class OCRMedicineSearchView(APIView):
             return Response({"error": "OCR processing failed. Please try again."}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
         search_started = perf_counter()
+        if _ocr_debug_tokens_log_enabled():
+            logger.info(
+                "ocr_debug_tokens_pre_search user_id=%s conf=%.4f angle=%s engine=%s tokens=%s raw_texts=%s crop_count_raw=%s crop_count_used=%s angles_used=%s engine_calls=%s",
+                request.user.id,
+                float(meta.get("confidence", 0.0)),
+                meta.get("angle", 0),
+                meta.get("engine", ""),
+                tokens,
+                meta.get("raw_texts", []),
+                meta.get("crop_count_raw", 0),
+                meta.get("crop_count_used", 0),
+                meta.get("angles_used", 0),
+                meta.get("engine_calls", 0),
+            )
 
         if not tokens:
             tier = "low"
@@ -714,15 +775,16 @@ class OCRMedicineSearchView(APIView):
                 continue
             query_weight = 1.0
             penalty_multiplier = 1.0
+            is_bigram = " " in token
             if phrase_ok and " " in phrase_token:
-                query_weight = 0.90
-                penalty_multiplier = 1.15
+                query_weight = 0.95 if is_bigram else 0.90
+                penalty_multiplier = 1.05 if is_bigram else 1.15
                 if phrase_top_score >= strong_phrase_threshold:
-                    query_weight = 0.80
-                    penalty_multiplier = 1.25
+                    query_weight = 0.90 if is_bigram else 0.80
+                    penalty_multiplier = 1.10 if is_bigram else 1.25
             elif not phrase_ok:
-                query_weight = 0.85
-                penalty_multiplier = 1.35
+                query_weight = 1.00 if is_bigram else 0.90
+                penalty_multiplier = 1.05 if is_bigram else 1.20
             for hit in _fuzzy_search_medicines(
                 token,
                 limit=top_k,
@@ -735,7 +797,12 @@ class OCRMedicineSearchView(APIView):
 
         raw_top_score = max((float(item.get("score", 0.0)) for item in seen.values()), default=0.0)
         result_floor = float(getattr(settings, "OCR_RESULT_FLOOR", 0.60))
-        matches = [item for item in seen.values() if float(item.get("score", 0.0)) >= result_floor]
+        near_miss_floor = float(getattr(settings, "OCR_NEAR_MISS_RESULT_FLOOR", 0.55))
+        near_miss_conf = float(getattr(settings, "OCR_NEAR_MISS_OCR_CONFIDENCE", 0.93))
+        effective_floor = result_floor
+        if float(meta.get("confidence", 0.0)) >= near_miss_conf:
+            effective_floor = min(result_floor, near_miss_floor)
+        matches = [item for item in seen.values() if float(item.get("score", 0.0)) >= effective_floor]
         matches = sorted(matches, key=lambda item: item["_rank_score"], reverse=True)
 
         top_score = float(matches[0]["score"]) if matches else 0.0
@@ -783,6 +850,26 @@ class OCRMedicineSearchView(APIView):
             int(action == "retake_photo"),
             int(not matches),
         )
+        if _ocr_debug_tokens_log_enabled():
+            top_debug = [
+                {
+                    "id": item["medicine"].id,
+                    "name": item["medicine"].trade_name,
+                    "score": round(float(item.get("score", 0.0)), 4),
+                    "rank_score": round(float(item.get("_rank_score", 0.0)), 4),
+                    "matched_query": item.get("matched_query", ""),
+                }
+                for item in matches[: min(5, len(matches))]
+            ]
+            logger.info(
+                "ocr_debug_tokens_post_search user_id=%s floor=%.3f effective_floor=%.3f raw_top_score=%.4f tokens=%s top=%s",
+                request.user.id,
+                result_floor,
+                effective_floor,
+                raw_top_score,
+                tokens,
+                top_debug,
+            )
 
         decode_ms = ((ocr_started - decode_started) * 1000.0) if (decode_started and ocr_started) else 0.0
         ocr_ms = ((search_started - ocr_started) * 1000.0) if ocr_started else 0.0

@@ -771,7 +771,9 @@ class OCRMedicineSearchView(APIView):
         phrase_ok = bool(phrase_hits) and phrase_top_score >= phrase_gate
         strong_phrase_threshold = float(getattr(settings, "OCR_PHRASE_STRONG_SCORE", 0.85))
         for idx, token in enumerate(tokens):
-            if idx == 0:
+            # Skip the first token only when it is a multi-word phrase candidate.
+            # For single-token OCR output (e.g. "miconaz"), we must still search it.
+            if idx == 0 and " " in phrase_token:
                 continue
             query_weight = 1.0
             penalty_multiplier = 1.0

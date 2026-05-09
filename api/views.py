@@ -733,12 +733,13 @@ class OCRMedicineSearchView(APIView):
                 if med_id not in seen or hit["_rank_score"] > seen[med_id]["_rank_score"]:
                     seen[med_id] = hit
 
+        raw_top_score = max((float(item.get("score", 0.0)) for item in seen.values()), default=0.0)
         result_floor = float(getattr(settings, "OCR_RESULT_FLOOR", 0.60))
         matches = [item for item in seen.values() if float(item.get("score", 0.0)) >= result_floor]
         matches = sorted(matches, key=lambda item: item["_rank_score"], reverse=True)
 
         top_score = float(matches[0]["score"]) if matches else 0.0
-        tier = _confidence_tier(float(meta["confidence"]), top_score)
+        tier = _confidence_tier(float(meta["confidence"]), raw_top_score)
         action = _response_action(tier)
         low_tier_cap = int(getattr(settings, "OCR_LOW_CONFIDENCE_MAX_RESULTS", 2))
         if tier == "low":
@@ -761,7 +762,9 @@ class OCRMedicineSearchView(APIView):
             serialized_matches.append(payload)
 
         message = ""
-        if tier == "low":
+        if not matches and float(meta["confidence"]) >= float(getattr(settings, "OCR_HIGH_CONFIDENCE_THRESHOLD", 0.85)):
+            message = "Text was read clearly, but no medicine match was found in the catalog."
+        elif tier == "low":
             message = "Low confidence result. Please retake the photo in brighter light and ensure the name is centered."
 
         logger.info(

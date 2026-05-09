@@ -691,7 +691,7 @@ class OCRMedicineSearchView(APIView):
 
         search_started = perf_counter()
         if _ocr_debug_tokens_log_enabled():
-            logger.info(
+            logger.warning(
                 "ocr_debug_tokens_pre_search user_id=%s conf=%.4f angle=%s engine=%s tokens=%s raw_texts=%s crop_count_raw=%s crop_count_used=%s angles_used=%s engine_calls=%s",
                 request.user.id,
                 float(meta.get("confidence", 0.0)),
@@ -861,7 +861,7 @@ class OCRMedicineSearchView(APIView):
                 }
                 for item in matches[: min(5, len(matches))]
             ]
-            logger.info(
+            logger.warning(
                 "ocr_debug_tokens_post_search user_id=%s floor=%.3f effective_floor=%.3f raw_top_score=%.4f tokens=%s top=%s",
                 request.user.id,
                 result_floor,
